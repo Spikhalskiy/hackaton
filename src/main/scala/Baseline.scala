@@ -3,18 +3,18 @@ import java.io.File
 import breeze.numerics.abs
 import org.apache.hadoop.io.compress.GzipCodec
 import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.mllib.classification.{LogisticRegressionWithLBFGS}
+import org.apache.spark.mllib.classification.{LogisticRegressionModel, LogisticRegressionWithLBFGS}
 import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SQLContext
-import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.{SparkContext, SparkConf}
 import org.slf4j.LoggerFactory
 
 import scala.collection.mutable.ArrayBuffer
 
-case class PairWithCommonFriends(person1: Int, person2: Int, commonFriendsCount: Int)
+case class PairWithCommonFriends(person1: Int, person2: Int, commonFriendsCount: Double)
 case class UserFriends(user: Int, friends: Array[Int])
 case class AgeSex(age: Int, sex: Int)
 
@@ -66,13 +66,12 @@ object Baseline {
       // flat and reverse graph
       // step 1.a from description
 
-      //TODO why 8?
       graph
           .filter(userFriends => userFriends.friends.length >= 2 && userFriends.friends.length <= MeaningfulMaxFriendsCount) //was 8 before
           .flatMap(userFriends => userFriends.friends.map(x => (x, userFriends.user)))
           .groupByKey(NumPartitions)
           .map(t => t._2.toArray)
-          .filter(userFriends => userFriends.length >= 2 && userFriends.length <= 2 * MeaningfulMaxFriendsCount)
+          .filter(userFriends => userFriends.length >= 2 && userFriends.length <= MeaningfulMaxFriendsCount)
           .map(userFriends => userFriends.sorted)
           .map(friends => new Tuple1(friends))
           .toDF
@@ -90,10 +89,12 @@ object Baseline {
         val commonFriendsCounts = {
           sqlc.read.parquet(reversedGraphPath)
               .map(t => generatePairs(t.getAs[Seq[Int]](0), NumPartitionsGraph, partition))
-              .flatMap(pairs => pairs.map(pair => pair -> 1))
+              .flatMap(pairs => pairs.map({
+                case (userId1, userId2, commonFriendSize) => (userId1, userId2) -> (1.0 / commonFriendSize)})
+              )
               .reduceByKey((x, y) => x + y)
               .map(t => PairWithCommonFriends(t._1._1, t._1._2, t._2))
-              .filter(pair => pair.commonFriendsCount > 2) //was 8 before
+              .filter(pair => pair.commonFriendsCount >= 2) //was 8 before
         }
 
         commonFriendsCounts.toDF.repartition(4).write.parquet(commonFriendsPath + "/part_" + partition)
@@ -105,9 +106,8 @@ object Baseline {
     val commonFriendsCounts = {
       sqlc
         .read.parquet(commonFriendsPath + "/part_33")
-        .map(t => PairWithCommonFriends(t.getAs[Int](0), t.getAs[Int](1), t.getAs[Int](2)))
+        .map(t => PairWithCommonFriends(t.getAs[Int](0), t.getAs[Int](1), t.getAs[Double](2)))
     }
-
 
     // step 3
     val usersBC = sc.broadcast(graph.map(userFriends => userFriends.user).collect().toSet)
@@ -121,21 +121,7 @@ object Baseline {
         )
     }
 
-    // step 4
-    val ageSex = {
-      sc.textFile(demographyPath)
-        .map(line => {
-          val lineSplit = line.trim().split("\t")
-          if (lineSplit(2) == "") {
-            lineSplit(0).toInt -> AgeSex(0, lineSplit(3).toInt)
-          }
-          else {
-            lineSplit(0).toInt -> AgeSex(lineSplit(2).toInt, lineSplit(3).toInt)
-          }
-        })
-    }
-
-    val ageSexBC = sc.broadcast(ageSex.collectAsMap())
+    val ageSexBC = prepareAgeSexBroadcast(sc, demographyPath)
 
     // step 5
     val data = {
@@ -179,7 +165,7 @@ object Baseline {
     val testCommonFriendsCounts = {
       sqlc
         .read.parquet(commonFriendsPath + "/part_*/")
-        .map(t => PairWithCommonFriends(t.getAs[Int](0), t.getAs[Int](1), t.getAs[Int](2)))
+        .map(t => PairWithCommonFriends(t.getAs[Int](0), t.getAs[Int](1), t.getAs[Double](2)))
         .filter(pair => pair.person1 % 11 == 7 || pair.person2 % 11 == 7)
     }
 
@@ -189,36 +175,59 @@ object Baseline {
         .filter(t => t._2.label == 0.0)
     }
 
-    // step 8
+    buildPrediction(testData, model, threshold, predictionPath)
+  }
+
+  // step 4
+  def prepareAgeSexBroadcast(sc: SparkContext, demographyPath: String) = {
+    val ageSex =
+      sc.textFile(demographyPath)
+        .map(line => {
+          val lineSplit = line.trim().split("\t")
+          if (lineSplit(2) == "") {
+            lineSplit(0).toInt -> AgeSex(0, lineSplit(3).toInt)
+          }
+          else {
+            lineSplit(0).toInt -> AgeSex(lineSplit(2).toInt, lineSplit(3).toInt)
+          }
+        })
+    sc.broadcast(ageSex.collectAsMap())
+  }
+
+  // step 8
+  def buildPrediction(
+      testData: RDD[((Int, Int), LabeledPoint)], model: LogisticRegressionModel,
+      threshold: Double, predictionPath: String) = {
+
     val testPrediction = {
       testData
-        .flatMap { case (id, LabeledPoint(label, features)) =>
-          val prediction = model.predict(features)
-          Seq(id._1 -> (id._2, prediction), id._2 -> (id._1, prediction))
-        }
-        .filter(t => t._1 % 11 == 7 && t._2._2 >= threshold)
-        .groupByKey(NumPartitions)
-        .map(t => {
-          val user = t._1
-          val firendsWithRatings = t._2
-          val topBestFriends = firendsWithRatings.toList.sortBy(-_._2).take(100).map(x => x._1)
-          (user, topBestFriends)
-        })
-        .sortByKey(true, 1)
-        .map(t => t._1 + "\t" + t._2.mkString("\t"))
+          .flatMap { case (id, LabeledPoint(label, features)) =>
+            val prediction = model.predict(features)
+            Seq(id._1 -> (id._2, prediction), id._2 -> (id._1, prediction))
+          }
+          .filter(t => t._1 % 11 == 7 && t._2._2 >= threshold)
+          .groupByKey(NumPartitions)
+          .map(t => {
+            val user = t._1
+            val firendsWithRatings = t._2
+            val topBestFriends = firendsWithRatings.toList.sortBy(-_._2).take(100).map(x => x._1)
+            (user, topBestFriends)
+          })
+          .sortByKey(true, 1)
+          .map(t => t._1 + "\t" + t._2.mkString("\t"))
     }
 
     testPrediction.saveAsTextFile(predictionPath,  classOf[GzipCodec])
-
   }
 
+
   def generatePairs(pplWithCommonFriends: Seq[Int], numPartitions: Int, k: Int) = {
-    val pairs = ArrayBuffer.empty[(Int, Int)]
+    val pairs = ArrayBuffer.empty[(Int, Int, Int)]
     for (i <- pplWithCommonFriends.indices) {
       val userId1 = pplWithCommonFriends(i)
       if (userId1 % numPartitions == k) {
         for (j <- i + 1 until pplWithCommonFriends.length) {
-          pairs.append((userId1, pplWithCommonFriends(j)))
+          pairs.append((userId1, pplWithCommonFriends(j), pplWithCommonFriends.length))
         }
       }
     }
@@ -232,7 +241,7 @@ object Baseline {
 
     commonFriendsCounts
         .map(pair => (pair.person1, pair.person2) -> Vectors.dense(
-          pair.commonFriendsCount.toDouble,
+          pair.commonFriendsCount,
           abs(ageSexBC.value.getOrElse(pair.person1, AgeSex(0, 0)).age - ageSexBC.value.getOrElse(pair.person2, AgeSex(0, 0)).age).toDouble,
           if (ageSexBC.value.getOrElse(pair.person1, AgeSex(0, 0)).sex == ageSexBC.value.getOrElse(pair.person2, AgeSex(0, 0)).sex) 1.0 else 0.0)
         )
