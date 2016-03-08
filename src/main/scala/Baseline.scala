@@ -13,6 +13,7 @@ import org.apache.spark.{SparkContext, SparkConf}
 import org.slf4j.LoggerFactory
 
 import scala.collection.mutable.ArrayBuffer
+import scala.math.log
 
 case class PairWithCommonFriends(person1: Int, person2: Int, commonFriendsCount: Double)
 case class UserFriends(user: Int, friends: Array[Int])
@@ -90,7 +91,7 @@ object Baseline {
           sqlc.read.parquet(reversedGraphPath)
               .map(t => generatePairs(t.getAs[Seq[Int]](0), NumPartitionsGraph, partition))
               .flatMap(pairs => pairs.map({
-                case (userId1, userId2, commonFriendSize) => (userId1, userId2) -> (1.0 / commonFriendSize)})
+                case (userId1, userId2, commonFriendSize) => (userId1, userId2) -> (1.0 / log(commonFriendSize))})
               )
               .reduceByKey((x, y) => x + y)
               .map(t => PairWithCommonFriends(t._1._1, t._1._2, t._2))
