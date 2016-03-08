@@ -9,21 +9,24 @@ import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SQLContext
+import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema
 import org.apache.spark.{SparkContext, SparkConf}
 import org.slf4j.LoggerFactory
 
 import scala.collection.mutable.ArrayBuffer
 import scala.math.log
 
+case class OneWayFriendship(anotherUser: Int, fType: Int)
+case class Friendship(user1: Int, user2: Int, commonFriendSize: Int, combinedFType: Int)
 case class PairWithCommonFriends(person1: Int, person2: Int, commonFriendsCount: Double)
-case class UserFriends(user: Int, friends: Array[Int])
-case class AgeSex(age: Int, sex: Int)
+case class UserFriends(user: Int, friends: Array[OneWayFriendship])
+case class Profile(age: Int, sex: Int)
 
 object Baseline {
   val Log = LoggerFactory.getLogger(Baseline.getClass)
 
-  val NumPartitions = 200
-  val NumPartitionsGraph = 107
+  val NumPartitions = 120
+  val NumPartitionsGraph = 60
   val MeaningfulMaxFriendsCount = 1000
 
   def main(args: Array[String]) {
@@ -55,7 +58,8 @@ object Baseline {
                   .replace("{(", "")
                   .replace(")}", "")
                   .split("\\),\\(")
-                  .map(t => t.split(",")(0).toInt)
+                  .map(t => t.split(","))
+                  .map(splitStr => OneWayFriendship(splitStr(0).toInt, Helpers.normalizeFriendshipType(splitStr(1).toInt)))
             }
             UserFriends(user, friends)
           })
@@ -69,11 +73,12 @@ object Baseline {
 
       graph
           .filter(userFriends => userFriends.friends.length >= 2 && userFriends.friends.length <= MeaningfulMaxFriendsCount) //was 8 before
-          .flatMap(userFriends => userFriends.friends.map(x => (x, userFriends.user)))
+          .flatMap(userFriends => userFriends.friends.map(
+              x => (x.anotherUser, OneWayFriendship(userFriends.user, Helpers.invertFriendshipType(x.fType)))))
           .groupByKey(NumPartitions)
-          .map(t => t._2.toArray)
+          .map({case (userFromList, oneWayFriendshipSeq) => oneWayFriendshipSeq.toArray})
           .filter(userFriends => userFriends.length >= 2 && userFriends.length <= MeaningfulMaxFriendsCount)
-          .map(userFriends => userFriends.sorted)
+          .map(userFriends => userFriends.sortBy({case oneWayFriendship => oneWayFriendship.anotherUser}))
           .map(friends => new Tuple1(friends))
           .toDF
           .write.parquet(reversedGraphPath)
@@ -89,13 +94,16 @@ object Baseline {
       for (partition <- 0 until NumPartitionsGraph) {
         val commonFriendsCounts = {
           sqlc.read.parquet(reversedGraphPath)
-              .map(t => generatePairs(t.getAs[Seq[Int]](0), NumPartitionsGraph, partition))
-              .flatMap(pairs => pairs.map({
-                case (userId1, userId2, commonFriendSize) => (userId1, userId2) -> (1.0 / log(commonFriendSize))})
+              .map(t => generatePairs(
+                t.getSeq[GenericRowWithSchema](0).map(t =>
+                  new OneWayFriendship(t.getAs[Int](0), t.getAs[Int](1))), NumPartitionsGraph, partition))
+              .flatMap(pairs => pairs.map(
+                friendship => (friendship.user1, friendship.user2) ->
+                    ((if (friendship.combinedFType > 0) 1.0 else 1.0) / log(friendship.commonFriendSize)))
               )
               .reduceByKey((x, y) => x + y)
-              .map(t => PairWithCommonFriends(t._1._1, t._1._2, t._2))
-              .filter(pair => pair.commonFriendsCount >= 2) //was 8 before
+              .map({case ((user1, user2), fScore) => PairWithCommonFriends(user1, user2, fScore)})
+              .filter(pair => pair.commonFriendsCount >= 1) //was 8 before
         }
 
         commonFriendsCounts.toDF.repartition(4).write.parquet(commonFriendsPath + "/part_" + partition)
@@ -107,7 +115,7 @@ object Baseline {
     val commonFriendsCounts = {
       sqlc
         .read.parquet(commonFriendsPath + "/part_33")
-        .map(t => PairWithCommonFriends(t.getAs[Int](0), t.getAs[Int](1), t.getAs[Double](2)))
+        .map(t => new PairWithCommonFriends(t.getAs[Int](0), t.getAs[Int](1), t.getAs[Double](2)))
     }
 
     // step 3
@@ -117,15 +125,15 @@ object Baseline {
       graph
         .flatMap(
           userFriends => userFriends.friends
-            .filter(x => usersBC.value.contains(x) && x > userFriends.user)
-            .map(x => (userFriends.user, x) -> 1.0)
+            .filter(oneWayFriendship => usersBC.value.contains(oneWayFriendship.anotherUser) && oneWayFriendship.anotherUser > userFriends.user)
+            .map(x => (userFriends.user, x.anotherUser) -> 1.0)
         )
     }
 
     val ageSexBC = prepareAgeSexBroadcast(sc, demographyPath)
 
     // step 5
-    val data = {
+    val trainData = {
       prepareData(commonFriendsCounts, positives, ageSexBC)
         .map(t => LabeledPoint(t._2._2.getOrElse(0.0), t._2._1))
     }
@@ -133,7 +141,7 @@ object Baseline {
 
     // split data into training (10%) and validation (90%)
     // step 6
-    val splits = data.randomSplit(Array(0.1, 0.9), seed = 11L)
+    val splits = trainData.randomSplit(Array(0.1, 0.9), seed = 11L)
     val training = splits(0).cache()
     val validation = splits(1)
 
@@ -186,10 +194,10 @@ object Baseline {
         .map(line => {
           val lineSplit = line.trim().split("\t")
           if (lineSplit(2) == "") {
-            lineSplit(0).toInt -> AgeSex(0, lineSplit(3).toInt)
+            lineSplit(0).toInt -> Profile(0, lineSplit(3).toInt)
           }
           else {
-            lineSplit(0).toInt -> AgeSex(lineSplit(2).toInt, lineSplit(3).toInt)
+            lineSplit(0).toInt -> Profile(lineSplit(2).toInt, lineSplit(3).toInt)
           }
         })
     sc.broadcast(ageSex.collectAsMap())
@@ -222,13 +230,15 @@ object Baseline {
   }
 
 
-  def generatePairs(pplWithCommonFriends: Seq[Int], numPartitions: Int, k: Int) = {
-    val pairs = ArrayBuffer.empty[(Int, Int, Int)]
+  def generatePairs(pplWithCommonFriends: Seq[OneWayFriendship], numPartitions: Int, k: Int) = {
+    val pairs = ArrayBuffer.empty[Friendship]
     for (i <- pplWithCommonFriends.indices) {
-      val userId1 = pplWithCommonFriends(i)
-      if (userId1 % numPartitions == k) {
+      val f1 = pplWithCommonFriends(i)
+      if (f1.anotherUser % numPartitions == k) {
         for (j <- i + 1 until pplWithCommonFriends.length) {
-          pairs.append((userId1, pplWithCommonFriends(j), pplWithCommonFriends.length))
+          val f2 = pplWithCommonFriends(j)
+          pairs.append(Friendship(f1.anotherUser, f2.anotherUser,
+            pplWithCommonFriends.length, Helpers.combineFriendshipTypesToMask(f1.fType, f2.fType)))
         }
       }
     }
@@ -238,13 +248,13 @@ object Baseline {
   def prepareData(
       commonFriendsCounts: RDD[PairWithCommonFriends],
       positives: RDD[((Int, Int), Double)],
-      ageSexBC: Broadcast[scala.collection.Map[Int, AgeSex]]) = {
+      ageSexBC: Broadcast[scala.collection.Map[Int, Profile]]) = {
 
     commonFriendsCounts
         .map(pair => (pair.person1, pair.person2) -> Vectors.dense(
           pair.commonFriendsCount,
-          abs(ageSexBC.value.getOrElse(pair.person1, AgeSex(0, 0)).age - ageSexBC.value.getOrElse(pair.person2, AgeSex(0, 0)).age).toDouble,
-          if (ageSexBC.value.getOrElse(pair.person1, AgeSex(0, 0)).sex == ageSexBC.value.getOrElse(pair.person2, AgeSex(0, 0)).sex) 1.0 else 0.0)
+          abs(ageSexBC.value.getOrElse(pair.person1, Profile(0, 0)).age - ageSexBC.value.getOrElse(pair.person2, Profile(0, 0)).age).toDouble,
+          if (ageSexBC.value.getOrElse(pair.person1, Profile(0, 0)).sex == ageSexBC.value.getOrElse(pair.person2, Profile(0, 0)).sex) 1.0 else 0.0)
         )
         .leftOuterJoin(positives)
   }
