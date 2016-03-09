@@ -1,11 +1,6 @@
 import java.io.File
 
-import breeze.numerics.abs
-import org.apache.hadoop.io.compress.GzipCodec
-import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.mllib.classification.{LogisticRegressionModel, LogisticRegressionWithLBFGS}
 import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
-import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.SQLContext
@@ -13,20 +8,19 @@ import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema
 import org.apache.spark.{SparkContext, SparkConf}
 import org.slf4j.LoggerFactory
 
-import scala.collection.mutable.ArrayBuffer
 import scala.math.log
 
 case class OneWayFriendship(anotherUser: Int, fType: Int)
 case class Friendship(user1: Int, user2: Int, commonFriendSize: Int, combinedFType: Int)
 case class PairWithCommonFriends(person1: Int, person2: Int, commonFriendsCount: Double)
 case class UserFriends(user: Int, friends: Array[OneWayFriendship])
-case class Profile(age: Int, sex: Int)
+case class Profile(age: Int, sex: Int, country: Long, location: Long, loginRegion: Long)
 
 object Baseline {
   val Log = LoggerFactory.getLogger(Baseline.getClass)
 
-  val NumPartitions = 120
-  val NumPartitionsGraph = 60
+  val NumPartitions = 140
+  val NumPartitionsGraph = 90
   val MeaningfulMaxFriendsCount = 1000
 
   def main(args: Array[String]) {
@@ -35,8 +29,6 @@ object Baseline {
       .setAppName("Baseline")
     val sc = new SparkContext(sparkConf)
     val sqlc = new SQLContext(sc)
-
-    import sqlc.implicits._
 
     val dataDir = if (args.length == 1) args(0) else "./"
 
@@ -48,67 +40,9 @@ object Baseline {
     val modelPath = dataDir + "LogisticRegressionModel"
 
     // read graph
-    val graph = {
-      sc.textFile(graphPath)
-          .map(line => {
-            val lineSplit = line.split("\t")
-            val user = lineSplit(0).toInt
-            val friends = {
-              lineSplit(1)
-                  .replace("{(", "")
-                  .replace(")}", "")
-                  .split("\\),\\(")
-                  .map(t => t.split(","))
-                  .map(splitStr => OneWayFriendship(splitStr(0).toInt, Helpers.normalizeFriendshipType(splitStr(1).toInt)))
-            }
-            UserFriends(user, friends)
-          })
-    }
-
-    if (new File(reversedGraphPath).exists()) {
-      Log.warn("Reversed Graph Exists - SKIPPED")
-    } else {
-      // flat and reverse graph
-      // step 1.a from description
-
-      graph
-          .filter(userFriends => userFriends.friends.length >= 2 && userFriends.friends.length <= MeaningfulMaxFriendsCount) //was 8 before
-          .flatMap(userFriends => userFriends.friends.map(
-              x => (x.anotherUser, OneWayFriendship(userFriends.user, Helpers.invertFriendshipType(x.fType)))))
-          .groupByKey(NumPartitions)
-          .map({case (userFromList, oneWayFriendshipSeq) => oneWayFriendshipSeq.toArray})
-          .filter(userFriends => userFriends.length >= 2 && userFriends.length <= MeaningfulMaxFriendsCount)
-          .map(userFriends => userFriends.sortBy({case oneWayFriendship => oneWayFriendship.anotherUser}))
-          .map(friends => new Tuple1(friends))
-          .toDF
-          .write.parquet(reversedGraphPath)
-    }
-
-    if (new File(commonFriendsPath).exists()) {
-      Log.warn("Commons Friend Exists - SKIPPED")
-    } else {
-      // for each pair of ppl count the amount of their common friends
-      // amount of shared friends for pair (A, B) and for pair (B, A) is the same
-      // so order pair: A < B and count common friends for pairs unique up to permutation
-      // step 1.b
-      for (partition <- 0 until NumPartitionsGraph) {
-        val commonFriendsCounts = {
-          sqlc.read.parquet(reversedGraphPath)
-              .map(t => generatePairs(
-                t.getSeq[GenericRowWithSchema](0).map(t =>
-                  new OneWayFriendship(t.getAs[Int](0), t.getAs[Int](1))), NumPartitionsGraph, partition))
-              .flatMap(pairs => pairs.map(
-                friendship => (friendship.user1, friendship.user2) ->
-                    ((if (friendship.combinedFType > 0) 1.0 else 1.0) / log(friendship.commonFriendSize)))
-              )
-              .reduceByKey((x, y) => x + y)
-              .map({case ((user1, user2), fScore) => PairWithCommonFriends(user1, user2, fScore)})
-              .filter(pair => pair.commonFriendsCount >= 1) //was 8 before
-        }
-
-        commonFriendsCounts.toDF.repartition(4).write.parquet(commonFriendsPath + "/part_" + partition)
-      }
-    }
+    val graph = graphPrepare(sc, graphPath)
+    reversedGraphPrepare(reversedGraphPath, graph, sqlc)
+    commonFriendsPrepare(commonFriendsPath, reversedGraphPath, sqlc)
 
     // prepare data for training model
     // step 2
@@ -130,11 +64,11 @@ object Baseline {
         )
     }
 
-    val ageSexBC = prepareAgeSexBroadcast(sc, demographyPath)
+    val ageSexBC = DataPreparingHelpers.prepareAgeSexBroadcast(sc, demographyPath)
 
     // step 5
     val trainData = {
-      prepareData(commonFriendsCounts, positives, ageSexBC)
+      DataPreparingHelpers.prepareData(commonFriendsCounts, positives, ageSexBC)
         .map(t => LabeledPoint(t._2._2.getOrElse(0.0), t._2._1))
     }
 
@@ -146,13 +80,8 @@ object Baseline {
     val validation = splits(1)
 
     // run training algorithm to build the model
-    val model = {
-      new LogisticRegressionWithLBFGS()
-        .setNumClasses(2)
-        .run(training)
-    }
+    val model = ModelHelpers.logisticRegressionModel(training)
 
-    model.clearThreshold()
     model.save(sc, modelPath)
 
     val predictionAndLabels = {
@@ -179,83 +108,81 @@ object Baseline {
     }
 
     val testData = {
-      prepareData(testCommonFriendsCounts, positives, ageSexBC)
+      DataPreparingHelpers.prepareData(testCommonFriendsCounts, positives, ageSexBC)
         .map(t => t._1 -> LabeledPoint(t._2._2.getOrElse(0.0), t._2._1))
         .filter(t => t._2.label == 0.0)
     }
 
-    buildPrediction(testData, model, threshold, predictionPath)
+    ModelHelpers.buildPrediction(testData, model, threshold, predictionPath)
   }
 
-  // step 4
-  def prepareAgeSexBroadcast(sc: SparkContext, demographyPath: String) = {
-    val ageSex =
-      sc.textFile(demographyPath)
+  def graphPrepare(sc: SparkContext, graphPath: String) = {
+    sc.textFile(graphPath)
         .map(line => {
-          val lineSplit = line.trim().split("\t")
-          if (lineSplit(2) == "") {
-            lineSplit(0).toInt -> Profile(0, lineSplit(3).toInt)
+          val lineSplit = line.split("\t")
+          val user = lineSplit(0).toInt
+          val friends = {
+            lineSplit(1)
+                .replace("{(", "")
+                .replace(")}", "")
+                .split("\\),\\(")
+                .map(t => t.split(","))
+                .map(splitStr => OneWayFriendship(splitStr(0).toInt, FriendshipHelpers.normalizeFriendshipType(splitStr(1).toInt)))
           }
-          else {
-            lineSplit(0).toInt -> Profile(lineSplit(2).toInt, lineSplit(3).toInt)
-          }
+          UserFriends(user, friends)
         })
-    sc.broadcast(ageSex.collectAsMap())
   }
 
-  // step 8
-  def buildPrediction(
-      testData: RDD[((Int, Int), LabeledPoint)], model: LogisticRegressionModel,
-      threshold: Double, predictionPath: String) = {
+  def reversedGraphPrepare(reversedGraphPath: String, graph: RDD[UserFriends], sqlc: SQLContext) = {
+    import sqlc.implicits._
 
-    val testPrediction = {
-      testData
-          .flatMap { case (id, LabeledPoint(label, features)) =>
-            val prediction = model.predict(features)
-            Seq(id._1 -> (id._2, prediction), id._2 -> (id._1, prediction))
-          }
-          .filter(t => t._1 % 11 == 7 && t._2._2 >= threshold)
+    if (new File(reversedGraphPath).exists()) {
+      Log.warn("Reversed Graph Exists - SKIPPED")
+    } else {
+      // flat and reverse graph
+      // step 1.a from description
+
+      graph
+          .filter(userFriends => userFriends.friends.length >= 2 && userFriends.friends.length <= MeaningfulMaxFriendsCount) //was 8 before
+          .flatMap(userFriends => userFriends.friends.map(
+            x => (x.anotherUser, OneWayFriendship(userFriends.user, FriendshipHelpers.invertFriendshipType(x.fType)))))
           .groupByKey(NumPartitions)
-          .map(t => {
-            val user = t._1
-            val firendsWithRatings = t._2
-            val topBestFriends = firendsWithRatings.toList.sortBy(-_._2).take(100).map(x => x._1)
-            (user, topBestFriends)
-          })
-          .sortByKey(true, 1)
-          .map(t => t._1 + "\t" + t._2.mkString("\t"))
+          .map({case (userFromList, oneWayFriendshipSeq) => oneWayFriendshipSeq.toArray})
+          .filter(userFriends => userFriends.length >= 2 && userFriends.length <= MeaningfulMaxFriendsCount)
+          .map(userFriends => userFriends.sortBy({case oneWayFriendship => oneWayFriendship.anotherUser}))
+          .map(friends => new Tuple1(friends))
+          .toDF
+          .write.parquet(reversedGraphPath)
     }
-
-    testPrediction.saveAsTextFile(predictionPath,  classOf[GzipCodec])
   }
 
+  def commonFriendsPrepare(commonFriendsPath: String, reversedGraphPath: String, sqlc: SQLContext) = {
+    import sqlc.implicits._
 
-  def generatePairs(pplWithCommonFriends: Seq[OneWayFriendship], numPartitions: Int, k: Int) = {
-    val pairs = ArrayBuffer.empty[Friendship]
-    for (i <- pplWithCommonFriends.indices) {
-      val f1 = pplWithCommonFriends(i)
-      if (f1.anotherUser % numPartitions == k) {
-        for (j <- i + 1 until pplWithCommonFriends.length) {
-          val f2 = pplWithCommonFriends(j)
-          pairs.append(Friendship(f1.anotherUser, f2.anotherUser,
-            pplWithCommonFriends.length, Helpers.combineFriendshipTypesToMask(f1.fType, f2.fType)))
+    if (new File(commonFriendsPath).exists()) {
+      Log.warn("Commons Friend Exists - SKIPPED")
+    } else {
+      // for each pair of ppl count the amount of their common friends
+      // amount of shared friends for pair (A, B) and for pair (B, A) is the same
+      // so order pair: A < B and count common friends for pairs unique up to permutation
+      // step 1.b
+      for (partition <- 0 until NumPartitionsGraph) {
+        val commonFriendsCounts = {
+          sqlc.read.parquet(reversedGraphPath)
+              .map(t => DataPreparingHelpers.generatePairs(
+                t.getSeq[GenericRowWithSchema](0).map(t =>
+                  new OneWayFriendship(t.getAs[Int](0), t.getAs[Int](1))), NumPartitionsGraph, partition))
+              .flatMap(pairs => pairs.map(
+                friendship => (friendship.user1, friendship.user2) ->
+                    (FriendshipHelpers.getCoefForCombinedFriendship(friendship.combinedFType) / log(friendship.commonFriendSize)))
+              )
+              .reduceByKey((x, y) => x + y)
+              .map({case ((user1, user2), fScore) => PairWithCommonFriends(user1, user2, fScore)})
+              .filter(pair => pair.commonFriendsCount >= 2) //was 8 before
         }
+
+        commonFriendsCounts.toDF.repartition(4).write.parquet(commonFriendsPath + "/part_" + partition)
       }
     }
-    pairs
-  }
-
-  def prepareData(
-      commonFriendsCounts: RDD[PairWithCommonFriends],
-      positives: RDD[((Int, Int), Double)],
-      ageSexBC: Broadcast[scala.collection.Map[Int, Profile]]) = {
-
-    commonFriendsCounts
-        .map(pair => (pair.person1, pair.person2) -> Vectors.dense(
-          pair.commonFriendsCount,
-          abs(ageSexBC.value.getOrElse(pair.person1, Profile(0, 0)).age - ageSexBC.value.getOrElse(pair.person2, Profile(0, 0)).age).toDouble,
-          if (ageSexBC.value.getOrElse(pair.person1, Profile(0, 0)).sex == ageSexBC.value.getOrElse(pair.person2, Profile(0, 0)).sex) 1.0 else 0.0)
-        )
-        .leftOuterJoin(positives)
   }
 }

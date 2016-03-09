@@ -1,6 +1,5 @@
-import scala.collection.BitSet
 
-object Helpers {
+object FriendshipHelpers {
   val FAMILY = Integer.parseInt(    "10", 2)
   val FRIENDS = Integer.parseInt(   "100", 2)
   val SCHOOL = Integer.parseInt(    "1000", 2)
@@ -190,6 +189,40 @@ object Helpers {
 
   def combineFriendshipTypesToMask(fType1: Int, fType2: Int): Int = {
     granulateFriendshipType(fType1) & granulateFriendshipType(fType2)
+  }
+
+  def getCoefForCombinedFriendship(combinedFType: Int): Double = {
+    var result = 1.0
+
+    if ((combinedFType & FAMILY) > 0) {
+      result += 3.0
+    }
+
+    if ((combinedFType & FRIENDS) > 0) {
+      result += 1.0
+    }
+
+    if ((combinedFType & SCHOOL) > 0) {
+      result += 1.7
+    }
+
+    if ((combinedFType & WORK) > 0) {
+      result += 1.1
+    }
+
+    if ((combinedFType & UNIVERSITY) > 0) {
+      result += 1.5
+    }
+
+    if ((combinedFType & ARMY) > 0) {
+      result += 1.2
+    }
+
+    if ((combinedFType & PLAY) > 0) {
+      result += 2.0
+    }
+
+    result
   }
 }
 
