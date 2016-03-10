@@ -195,31 +195,31 @@ object FriendshipHelpers {
     var result = 1.0
 
     if ((combinedFType & FAMILY) > 0) {
-      result += 3.0
-    }
-
-    if ((combinedFType & FRIENDS) > 0) {
       result += 1.0
     }
 
+    if ((combinedFType & FRIENDS) > 0) {
+      result += 0.1
+    }
+
     if ((combinedFType & SCHOOL) > 0) {
-      result += 1.7
+      result += 0.6
     }
 
     if ((combinedFType & WORK) > 0) {
-      result += 1.1
+      result += 0.3
     }
 
     if ((combinedFType & UNIVERSITY) > 0) {
-      result += 1.5
+      result += 0.5
     }
 
     if ((combinedFType & ARMY) > 0) {
-      result += 1.2
+      result += 0.4
     }
 
     if ((combinedFType & PLAY) > 0) {
-      result += 2.0
+      result += 0.7
     }
 
     result

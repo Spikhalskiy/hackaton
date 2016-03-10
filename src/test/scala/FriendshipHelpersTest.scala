@@ -19,6 +19,10 @@ class FriendshipHelpersTest extends FlatSpec {
   "Spouse And Army" should "have nothing similar in combination" in {
     assert(FriendshipHelpers.combineFriendshipTypesToMask(1 << 2, 1 << 15) == 0)
   }
+
+  "Two From Army" should "have coefficient more than 1.0" in {
+    assert(FriendshipHelpers.getCoefForCombinedFriendship(FriendshipHelpers.combineFriendshipTypesToMask(1 << 6, 1 << 6)) > 1.0)
+  }
 }
 
 

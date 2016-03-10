@@ -37,7 +37,7 @@ object Baseline {
     val commonFriendsPath = dataDir + "commonFriendsCountsPartitioned"
     val demographyPath = dataDir + "demography"
     val predictionPath = dataDir + "prediction"
-    val modelPath = dataDir + "LogisticRegressionModel"
+//    val modelPath = dataDir + "model"
 
     // read graph
     val graph = graphPrepare(sc, graphPath)
@@ -82,7 +82,7 @@ object Baseline {
     // run training algorithm to build the model
     val model = ModelHelpers.logisticRegressionModel(training)
 
-    model.save(sc, modelPath)
+//    model.save(sc, modelPath)
 
     val predictionAndLabels = {
       validation.map { case LabeledPoint(label, features) =>
@@ -174,11 +174,11 @@ object Baseline {
                   new OneWayFriendship(t.getAs[Int](0), t.getAs[Int](1))), NumPartitionsGraph, partition))
               .flatMap(pairs => pairs.map(
                 friendship => (friendship.user1, friendship.user2) ->
-                    (FriendshipHelpers.getCoefForCombinedFriendship(friendship.combinedFType) / log(friendship.commonFriendSize)))
+                    (Strategies.getCombinedFriendshipCoef(friendship.combinedFType) / log(friendship.commonFriendSize)))
               )
               .reduceByKey((x, y) => x + y)
               .map({case ((user1, user2), fScore) => PairWithCommonFriends(user1, user2, fScore)})
-              .filter(pair => pair.commonFriendsCount >= 2) //was 8 before
+              .filter(pair => pair.commonFriendsCount >= 3) //was 8 before
         }
 
         commonFriendsCounts.toDF.repartition(4).write.parquet(commonFriendsPath + "/part_" + partition)
