@@ -4,12 +4,11 @@ import org.apache.spark.sql.SQLContext
 
 object Strategies {
   def getCombinedFriendshipCoef(combinedFType: Int): Double = {
-    //FriendshipHelpers.getCoefForCombinedFriendship(combinedFType)
-    1.0
+    FriendshipHelpers.getCoefForCombinedFriendship(combinedFType)
+//    1.0
   }
 
   def classificationModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = {
-//    ModelHelpers.logisticRegressionModel(training)
     ModelHelpers.decisionTreeModel(training, sqlc)
   }
 }

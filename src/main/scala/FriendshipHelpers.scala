@@ -86,16 +86,7 @@ object FriendshipHelpers {
   def granulateFriendshipType(fType: Int): Int = {
     var result = 0
 
-    //1 - family
-    //2 - friends
-    //3 - school
-    //4 - work
-    //5 - university
-    //6 - army
-    //7 - play
-
     if ((fType & M_LOVE) > 0) {
-      result |= FAMILY
       result |= FRIENDS
       result |= UNIVERSITY
       result |= SCHOOL

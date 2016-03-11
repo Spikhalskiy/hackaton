@@ -68,11 +68,6 @@ object ModelHelpers {
     val labeledPoints = testData.map({case (userPair, LabeledPoint(label, features)) => (serializeTuple(userPair), label, features)})
     val predictedRDD = model.predict[String](labeledPoints.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES)).cache()
 
-    println("Size of predicted RDD " + predictedRDD.count())
-//    for (predicted <- predictedRDD.countByValue().keys) {
-//      println(predicted)
-//    }
-
     val testPrediction = {
       predictedRDD
           .flatMap { case (pairStr, predictedProbability) =>
