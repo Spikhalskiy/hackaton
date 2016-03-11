@@ -1,46 +1,83 @@
-import org.apache.spark.mllib.classification.ClassificationModel
+import org.apache.spark.ml.Pipeline
+import org.apache.spark.ml.classification.DecisionTreeClassifier
+import org.apache.spark.ml.feature.VectorIndexer
 import org.apache.spark.mllib.classification.LogisticRegressionWithLBFGS
-import org.apache.spark.mllib.tree.RandomForest
 import org.apache.hadoop.io.compress.GzipCodec
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.{DataFrame, SQLContext}
+import org.apache.spark.ml.attribute.NominalAttribute
+import org.slf4j.LoggerFactory
 
 object ModelHelpers {
+  val Log = LoggerFactory.getLogger(Baseline.getClass)
+
   val NumPartitions = 120
 
-  def logisticRegressionModel(training: RDD[LabeledPoint]) = {
+  def logisticRegressionModel(training: RDD[LabeledPoint]): UnifiedClassifier = {
     val model = new LogisticRegressionWithLBFGS()
         .setNumClasses(2)
         .run(training)
     model.clearThreshold()
-    model
+
+    new LRClassifier(model)
   }
 
-  def randomForestModel(training: RDD[LabeledPoint]) = {
-    // Train a RandomForest model.
-    // Empty categoricalFeaturesInfo indicates all features are continuous.
-    val numClasses = 2
-    val categoricalFeaturesInfo = Map[Int, Int]()
-    val numTrees = 50 // Use more in practice.
-    val featureSubsetStrategy = "auto" // Let the algorithm choose.
-    val impurity = "gini"
-    val maxDepth = 20
-    val maxBins = 50
+  def decisionTreeModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = {
+    import sqlc.implicits._
+    val trainingDF = addMetadata(training.toDF())
+    Log.error("Dataframe has format " + trainingDF)
 
-    RandomForest.trainClassifier(training, numClasses, categoricalFeaturesInfo,
-      numTrees, featureSubsetStrategy, impurity, maxDepth, maxBins)
+    // Automatically identify categorical features, and index them.
+    val featureIndexer = new VectorIndexer()
+        .setInputCol(DataFrameColumns.FEATURES)
+        .setOutputCol("indexedFeatures")
+        .setMaxCategories(4) // features with > 4 distinct values are treated as continuous
+        .fit(trainingDF)
+
+    val dt = new DecisionTreeClassifier()
+        .setLabelCol(DataFrameColumns.LABEL)
+        .setFeaturesCol("indexedFeatures")
+
+        .setImpurity("gini")
+        .setMaxBins(64)
+
+        .setMaxDepth(30)
+        .setMinInstancesPerNode(50)
+
+
+    // Chain indexers and tree in a Pipeline
+    val pipeline = new Pipeline()
+        .setStages(Array(featureIndexer, dt))
+
+    // Train model.  This also runs the indexers.
+    val model = pipeline.fit(trainingDF)
+
+    new PipelineClassifier(model)
   }
 
   // step 8
   def buildPrediction(
-      testData: RDD[((Int, Int), LabeledPoint)], model: ClassificationModel,
-      threshold: Double, predictionPath: String) = {
+      testData: RDD[((Int, Int), LabeledPoint)],
+      model: UnifiedClassifier,
+      threshold: Double,
+      predictionPath: String,
+      sqlc: SQLContext) = {
+    import sqlc.implicits._
+
+    val labeledPoints = testData.map({case (userPair, LabeledPoint(label, features)) => (serializeTuple(userPair), label, features)})
+    val predictedRDD = model.predict[String](labeledPoints.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES)).cache()
+
+    println("Size of predicted RDD " + predictedRDD.count())
+//    for (predicted <- predictedRDD.countByValue().keys) {
+//      println(predicted)
+//    }
 
     val testPrediction = {
-      testData
-          .flatMap { case (id, LabeledPoint(label, features)) =>
-            val prediction = model.predict(features)
-            Seq(id._1 -> (id._2, prediction), id._2 -> (id._1, prediction))
+      predictedRDD
+          .flatMap { case (pairStr, predictedProbability) =>
+            val (user1, user2) = deserializeTuple(pairStr)
+            Seq(user1 -> (user2, predictedProbability), user2 -> (user1, predictedProbability))
           }
           .filter(t => t._1 % 11 == 7 && t._2._2 >= threshold)
           .groupByKey(NumPartitions)
@@ -55,5 +92,24 @@ object ModelHelpers {
     }
 
     testPrediction.saveAsTextFile(predictionPath,  classOf[GzipCodec])
+  }
+
+  def addMetadata(df: DataFrame) = {
+    val meta = NominalAttribute
+        .defaultAttr
+        .withName(DataFrameColumns.LABEL)
+        .withValues("0.0", "1.0")
+        .toMetadata
+
+    df.withColumn(DataFrameColumns.LABEL, df.col(DataFrameColumns.LABEL).as(DataFrameColumns.LABEL, meta))
+  }
+
+  def serializeTuple(tuple: (Int, Int)): String = {
+    tuple._1.toString + "," + tuple._2.toString
+  }
+
+  def deserializeTuple(str: String): (Int, Int) = {
+    val splits = str.split(',')
+    (splits(0).toInt, splits(1).toInt)
   }
 }

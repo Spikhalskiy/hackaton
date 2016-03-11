@@ -29,6 +29,7 @@ object Baseline {
       .setAppName("Baseline")
     val sc = new SparkContext(sparkConf)
     val sqlc = new SQLContext(sc)
+    import sqlc.implicits._
 
     val dataDir = if (args.length == 1) args(0) else "./"
 
@@ -37,7 +38,7 @@ object Baseline {
     val commonFriendsPath = dataDir + "commonFriendsCountsPartitioned"
     val demographyPath = dataDir + "demography"
     val predictionPath = dataDir + "prediction"
-//    val modelPath = dataDir + "model"
+    val modelPath = dataDir + "model"
 
     // read graph
     val graph = graphPrepare(sc, graphPath)
@@ -73,27 +74,26 @@ object Baseline {
     }
 
 
-    // split data into training (10%) and validation (90%)
+    // split data into training (90%) and validation (10%)
     // step 6
-    val splits = trainData.randomSplit(Array(0.1, 0.9), seed = 11L)
+    val splits = trainData.randomSplit(Array(0.9, 0.1), seed = 11L)
     val training = splits(0).cache()
     val validation = splits(1)
 
     // run training algorithm to build the model
-    val model = ModelHelpers.logisticRegressionModel(training)
+    val model = Strategies.classificationModel(training, sqlc)
 
-//    model.save(sc, modelPath)
-
-    val predictionAndLabels = {
-      validation.map { case LabeledPoint(label, features) =>
-        val prediction = model.predict(features)
-        (prediction, label)
-      }
-    }
+    val validationWithKey = validation
+        .map({case LabeledPoint(label, features) => (Helpers.randomLong(), label, features)}).cache() //cache needed because we generate random ids here
+    val predictedRDD = model.predict[Long](ModelHelpers.addMetadata(
+        validationWithKey.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES)))
+    val predictionAndLabels = validationWithKey.map({case (key, label, features) => (key, label)})
+        .join(predictedRDD).map({case (key, (label, predictedProbability)) => (predictedProbability, label)})
 
     // estimate model quality
     @transient val metricsLogReg = new BinaryClassificationMetrics(predictionAndLabels, 100)
     val threshold = metricsLogReg.fMeasureByThreshold(2.0).sortBy(-_._2).take(1)(0)._1
+    println("Use threshold = " + threshold)
 
     val rocLogReg = metricsLogReg.areaUnderROC()
     println("model ROC = " + rocLogReg.toString)
@@ -113,7 +113,7 @@ object Baseline {
         .filter(t => t._2.label == 0.0)
     }
 
-    ModelHelpers.buildPrediction(testData, model, threshold, predictionPath)
+    ModelHelpers.buildPrediction(testData, model, threshold, predictionPath, sqlc)
   }
 
   def graphPrepare(sc: SparkContext, graphPath: String) = {
@@ -178,7 +178,7 @@ object Baseline {
               )
               .reduceByKey((x, y) => x + y)
               .map({case ((user1, user2), fScore) => PairWithCommonFriends(user1, user2, fScore)})
-              .filter(pair => pair.commonFriendsCount >= 3) //was 8 before
+              .filter(pair => pair.commonFriendsCount >= 2) //was 8 before
         }
 
         commonFriendsCounts.toDF.repartition(4).write.parquet(commonFriendsPath + "/part_" + partition)
