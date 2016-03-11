@@ -12,7 +12,8 @@ import scala.math.log
 
 case class OneWayFriendship(anotherUser: Int, fType: Int)
 case class Friendship(user1: Int, user2: Int, commonFriendSize: Int, combinedFType: Int)
-case class PairWithCommonFriends(person1: Int, person2: Int, commonFriendsCount: Double)
+case class SquashedFriendship(weighedFLink: Double, combinedFType: Int)
+case class PairWithCommonFriends(person1: Int, person2: Int, commonFriendsCount: Double, combinedFType: Int)
 case class UserFriends(user: Int, friends: Array[OneWayFriendship])
 case class Profile(age: Int, sex: Int, country: Long, location: Long, loginRegion: Long)
 
@@ -46,12 +47,11 @@ object Baseline {
 
     // prepare data for training model
     // step 2
-    val commonFriendsCounts = {
-      sqlc
+    val commonFriends = sqlc
         .read.parquet(commonFriendsPath + "/part_*/")
-        .map(t => PairWithCommonFriends(t.getAs[Int](0), t.getAs[Int](1), t.getAs[Double](2)))
-        .filter(pair => pair.person1 % 11 != 7 && pair.person2 % 11 != 7)
-    }
+        .map(t => PairWithCommonFriends(t.getAs[Int](0), t.getAs[Int](1), t.getAs[Double](2), t.getAs[Int](3))).cache()
+
+    val commonFriendsCounts = commonFriends.filter(pair => pair.person1 % 11 != 7 && pair.person2 % 11 != 7)
 
     // step 3
     val usersBC = sc.broadcast(graph.map(userFriends => userFriends.user).collect().toSet)
@@ -85,8 +85,8 @@ object Baseline {
 
     val validationWithKey = validation
         .map({case LabeledPoint(label, features) => (Helpers.randomLong(), label, features)}).cache() //cache needed because we generate random ids here
-    val predictedRDD = model.predict[Long](ModelHelpers.addMetadata(
-        validationWithKey.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES)))
+    val predictedRDD = model.predict[Long](
+        validationWithKey.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES))
     val predictionAndLabels = validationWithKey.map({case (key, label, features) => (key, label)})
         .join(predictedRDD).map({case (key, (label, predictedProbability)) => (predictedProbability, label)})
 
@@ -100,12 +100,7 @@ object Baseline {
 
     // compute scores on the test set
     // step 7
-    val testCommonFriendsCounts = {
-      sqlc
-        .read.parquet(commonFriendsPath + "/part_*/")
-        .map(t => PairWithCommonFriends(t.getAs[Int](0), t.getAs[Int](1), t.getAs[Double](2)))
-        .filter(pair => pair.person1 % 11 == 7 || pair.person2 % 11 == 7)
-    }
+    val testCommonFriendsCounts = commonFriends.filter(pair => pair.person1 % 11 == 7 || pair.person2 % 11 == 7)
 
     val testData = {
       DataPreparingHelpers.prepareData(testCommonFriendsCounts, positives, ageSexBC)
@@ -174,10 +169,10 @@ object Baseline {
                   new OneWayFriendship(t.getAs[Int](0), t.getAs[Int](1))), NumPartitionsGraph, partition))
               .flatMap(pairs => pairs.map(
                 friendship => (friendship.user1, friendship.user2) ->
-                    (Strategies.getCombinedFriendshipCoef(friendship.combinedFType) / log(friendship.commonFriendSize)))
+                    SquashedFriendship(Strategies.getCombinedFriendshipCoef(friendship.combinedFType) / log(friendship.commonFriendSize), friendship.combinedFType))
               )
-              .reduceByKey((x, y) => x + y)
-              .map({case ((user1, user2), fScore) => PairWithCommonFriends(user1, user2, fScore)})
+              .reduceByKey({case (SquashedFriendship(weight1, combinedFType1), SquashedFriendship(weight2, combinedFType2)) => SquashedFriendship(weight1 + weight2, combinedFType1 | combinedFType2)})
+              .map({case ((user1, user2), SquashedFriendship(fScore, combinedFType)) => PairWithCommonFriends(user1, user2, fScore, combinedFType)})
               .filter(pair => pair.commonFriendsCount >= 2) //was 8 before
         }
 

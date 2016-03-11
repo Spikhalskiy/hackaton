@@ -26,7 +26,6 @@ object ModelHelpers {
   def decisionTreeModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = {
     import sqlc.implicits._
     val trainingDF = addMetadata(training.toDF())
-    Log.error("Dataframe has format " + trainingDF)
 
     // Automatically identify categorical features, and index them.
     val featureIndexer = new VectorIndexer()

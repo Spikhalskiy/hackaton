@@ -36,6 +36,14 @@ object DataPreparingHelpers {
     pairs
   }
 
+  val FAMILY = Integer.parseInt(    "1", 2)
+  val FRIENDS = Integer.parseInt(   "10", 2)
+  val SCHOOL = Integer.parseInt(    "100", 2)
+  val WORK = Integer.parseInt(      "1000", 2)
+  val UNIVERSITY = Integer.parseInt("10000", 2)
+  val ARMY = Integer.parseInt(      "100000", 2)
+  val PLAY = Integer.parseInt(      "1000000", 2)
+
   def prepareData(
       commonFriendsCounts: RDD[PairWithCommonFriends],
       positives: RDD[((Int, Int), Double)],
@@ -45,7 +53,7 @@ object DataPreparingHelpers {
         .map(pair => (pair.person1, pair.person2) -> {
           val user1 = ageSexBC.value.getOrElse(pair.person1, Profile(0, 0, 0, 0 , 0))
           val user2 = ageSexBC.value.getOrElse(pair.person2, Profile(0, 0, 0 ,0 , 0))
-
+          val fType = pair.combinedFType
           Vectors.dense(
             pair.commonFriendsCount,
             abs(user1.age - user2.age).toDouble,
@@ -54,7 +62,14 @@ object DataPreparingHelpers {
             if (user1.location != 0 && user2.location != 0) if (user1.location == user2.location) 1.0 else 0.0 else -1.0,
             if (user1.loginRegion != 0 && user2.loginRegion != 0) if (user1.loginRegion == user2.loginRegion) 1.0 else 0.0 else -1.0,
             if (user1.location != 0 && user1.location == user2.loginRegion ||
-                user2.location != 0 && user2.location == user1.loginRegion) 1.0 else 0.0
+                user2.location != 0 && user2.location == user1.loginRegion) 1.0 else 0.0,
+            FriendshipHelpers.combinedFTypeContains(fType, FriendshipHelpers.FAMILY),
+            FriendshipHelpers.combinedFTypeContains(fType, FriendshipHelpers.FRIENDS),
+            FriendshipHelpers.combinedFTypeContains(fType, FriendshipHelpers.SCHOOL),
+            FriendshipHelpers.combinedFTypeContains(fType, FriendshipHelpers.WORK),
+            FriendshipHelpers.combinedFTypeContains(fType, FriendshipHelpers.UNIVERSITY),
+            FriendshipHelpers.combinedFTypeContains(fType, FriendshipHelpers.ARMY),
+            FriendshipHelpers.combinedFTypeContains(fType, FriendshipHelpers.PLAY)
           )
         }
         )

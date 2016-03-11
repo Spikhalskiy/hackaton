@@ -1,12 +1,12 @@
 
 object FriendshipHelpers {
-  val FAMILY = Integer.parseInt(    "10", 2)
-  val FRIENDS = Integer.parseInt(   "100", 2)
-  val SCHOOL = Integer.parseInt(    "1000", 2)
-  val WORK = Integer.parseInt(      "10000", 2)
-  val UNIVERSITY = Integer.parseInt("100000", 2)
-  val ARMY = Integer.parseInt(      "1000000", 2)
-  val PLAY = Integer.parseInt(      "10000000", 2)
+  val FAMILY = Integer.parseInt(    "1", 2)
+  val FRIENDS = Integer.parseInt(   "10", 2)
+  val SCHOOL = Integer.parseInt(    "100", 2)
+  val WORK = Integer.parseInt(      "1000", 2)
+  val UNIVERSITY = Integer.parseInt("10000", 2)
+  val ARMY = Integer.parseInt(      "100000", 2)
+  val PLAY = Integer.parseInt(      "1000000", 2)
 
   val M_LOVE = Integer.parseInt(            "10", 2)
   val M_SPOUSE = Integer.parseInt(          "100", 2)
@@ -213,6 +213,10 @@ object FriendshipHelpers {
     }
 
     result
+  }
+
+  def combinedFTypeContains(fType: Int, fTypeGroup: Int): Double = {
+    if ((fType & fTypeGroup) > 0) 1.0 else 0.0
   }
 }
 
