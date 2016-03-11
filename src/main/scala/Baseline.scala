@@ -48,8 +48,9 @@ object Baseline {
     // step 2
     val commonFriendsCounts = {
       sqlc
-        .read.parquet(commonFriendsPath + "/part_33")
-        .map(t => new PairWithCommonFriends(t.getAs[Int](0), t.getAs[Int](1), t.getAs[Double](2)))
+        .read.parquet(commonFriendsPath + "/part_*/")
+        .map(t => PairWithCommonFriends(t.getAs[Int](0), t.getAs[Int](1), t.getAs[Double](2)))
+        .filter(pair => pair.person1 % 11 != 7 && pair.person2 % 11 != 7)
     }
 
     // step 3
