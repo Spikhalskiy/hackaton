@@ -181,6 +181,10 @@ object FriendshipHelpers {
     granulateFriendshipType(fType1) & granulateFriendshipType(fType2)
   }
 
+  def mergeCombinedFriendshipTypes(combinedFType1: Int, combinedFType2: Int): Int = {
+    combinedFType1 | combinedFType2
+  }
+
   def getCoefForCombinedFriendship(combinedFType: Int): Double = {
     var result = 1.0
 
@@ -215,7 +219,7 @@ object FriendshipHelpers {
     result
   }
 
-  def combinedFTypeContains(fType: Int, fTypeGroup: Int): Double = {
+  def combinedFTypeContainsGroup(fType: Int, fTypeGroup: Int): Double = {
     if ((fType & fTypeGroup) > 0) 1.0 else 0.0
   }
 }

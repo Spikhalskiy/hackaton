@@ -20,9 +20,9 @@ case class Profile(age: Int, sex: Int, country: Long, location: Long, loginRegio
 object Baseline {
   val Log = LoggerFactory.getLogger(Baseline.getClass)
 
-  val NumPartitions = 140
-  val NumPartitionsGraph = 90
-  val MeaningfulMaxFriendsCount = 1000
+  val NumPartitions = 50
+  val NumPartitionsGraph = 40
+  val MeaningfulMaxFriendsCount = 1200
 
   def main(args: Array[String]) {
 
@@ -51,7 +51,7 @@ object Baseline {
         .read.parquet(commonFriendsPath + "/part_*/")
         .map(t => PairWithCommonFriends(t.getAs[Int](0), t.getAs[Int](1), t.getAs[Double](2), t.getAs[Int](3))).cache()
 
-    val commonFriendsCounts = commonFriends.filter(pair => pair.person1 % 11 != 7 && pair.person2 % 11 != 7)
+    val trainCommonFriendsCounts = commonFriends.filter(pair => pair.person1 % 11 != 7 && pair.person2 % 11 != 7)
 
     // step 3
     val usersBC = sc.broadcast(graph.map(userFriends => userFriends.user).collect().toSet)
@@ -69,7 +69,7 @@ object Baseline {
 
     // step 5
     val trainData = {
-      DataPreparingHelpers.prepareData(commonFriendsCounts, positives, ageSexBC)
+      DataPreparingHelpers.prepareData(trainCommonFriendsCounts, positives, ageSexBC)
         .map(t => LabeledPoint(t._2._2.getOrElse(0.0), t._2._1))
     }
 
@@ -171,7 +171,8 @@ object Baseline {
                 friendship => (friendship.user1, friendship.user2) ->
                     SquashedFriendship(Strategies.getCombinedFriendshipCoef(friendship.combinedFType) / log(friendship.commonFriendSize), friendship.combinedFType))
               )
-              .reduceByKey({case (SquashedFriendship(weight1, combinedFType1), SquashedFriendship(weight2, combinedFType2)) => SquashedFriendship(weight1 + weight2, combinedFType1 | combinedFType2)})
+              .reduceByKey({case (SquashedFriendship(weight1, combinedFType1), SquashedFriendship(weight2, combinedFType2)) =>
+                SquashedFriendship(weight1 + weight2, FriendshipHelpers.mergeCombinedFriendshipTypes(combinedFType1, combinedFType2))})
               .map({case ((user1, user2), SquashedFriendship(fScore, combinedFType)) => PairWithCommonFriends(user1, user2, fScore, combinedFType)})
               .filter(pair => pair.commonFriendsCount >= 2) //was 8 before
         }

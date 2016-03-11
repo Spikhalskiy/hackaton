@@ -63,13 +63,13 @@ object DataPreparingHelpers {
             if (user1.loginRegion != 0 && user2.loginRegion != 0) if (user1.loginRegion == user2.loginRegion) 1.0 else 0.0 else -1.0,
             if (user1.location != 0 && user1.location == user2.loginRegion ||
                 user2.location != 0 && user2.location == user1.loginRegion) 1.0 else 0.0,
-            FriendshipHelpers.combinedFTypeContains(fType, FriendshipHelpers.FAMILY),
-            FriendshipHelpers.combinedFTypeContains(fType, FriendshipHelpers.FRIENDS),
-            FriendshipHelpers.combinedFTypeContains(fType, FriendshipHelpers.SCHOOL),
-            FriendshipHelpers.combinedFTypeContains(fType, FriendshipHelpers.WORK),
-            FriendshipHelpers.combinedFTypeContains(fType, FriendshipHelpers.UNIVERSITY),
-            FriendshipHelpers.combinedFTypeContains(fType, FriendshipHelpers.ARMY),
-            FriendshipHelpers.combinedFTypeContains(fType, FriendshipHelpers.PLAY)
+            FriendshipHelpers.combinedFTypeContainsGroup(fType, FriendshipHelpers.FAMILY),
+            FriendshipHelpers.combinedFTypeContainsGroup(fType, FriendshipHelpers.FRIENDS),
+            FriendshipHelpers.combinedFTypeContainsGroup(fType, FriendshipHelpers.SCHOOL),
+            FriendshipHelpers.combinedFTypeContainsGroup(fType, FriendshipHelpers.WORK),
+            FriendshipHelpers.combinedFTypeContainsGroup(fType, FriendshipHelpers.UNIVERSITY),
+            FriendshipHelpers.combinedFTypeContainsGroup(fType, FriendshipHelpers.ARMY),
+            FriendshipHelpers.combinedFTypeContainsGroup(fType, FriendshipHelpers.PLAY)
           )
         }
         )
