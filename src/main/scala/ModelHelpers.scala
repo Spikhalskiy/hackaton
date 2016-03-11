@@ -32,7 +32,7 @@ object ModelHelpers {
     val featureIndexer = new VectorIndexer()
         .setInputCol(DataFrameColumns.FEATURES)
         .setOutputCol("indexedFeatures")
-        .setMaxCategories(4) // features with > 4 distinct values are treated as continuous
+        .setMaxCategories(5) // features with > 4 distinct values are treated as continuous
         .fit(trainingDF)
 
     val dt = new DecisionTreeClassifier()

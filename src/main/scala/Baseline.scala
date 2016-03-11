@@ -38,7 +38,6 @@ object Baseline {
     val commonFriendsPath = dataDir + "commonFriendsCountsPartitioned"
     val demographyPath = dataDir + "demography"
     val predictionPath = dataDir + "prediction"
-    val modelPath = dataDir + "model"
 
     // read graph
     val graph = graphPrepare(sc, graphPath)

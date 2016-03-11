@@ -47,9 +47,15 @@ object DataPreparingHelpers {
           val user2 = ageSexBC.value.getOrElse(pair.person2, Profile(0, 0, 0 ,0 , 0))
 
           Vectors.dense(
-          pair.commonFriendsCount,
-          abs(user1.age - user2.age).toDouble,
-          if (user1.sex == user2.sex) 1.0 else 0.0)
+            pair.commonFriendsCount,
+            abs(user1.age - user2.age).toDouble,
+            if (user1.sex != 0 && user2.sex != 0) if (user1.sex == user2.sex) user2.sex.toDouble else 0.0 else -1.0,
+            if (user1.country != 0 && user2.country != 0) if (user1.country == user2.country) 1.0 else 0.0 else -1.0,
+            if (user1.location != 0 && user2.location != 0) if (user1.location == user2.location) 1.0 else 0.0 else -1.0,
+            if (user1.loginRegion != 0 && user2.loginRegion != 0) if (user1.loginRegion == user2.loginRegion) 1.0 else 0.0 else -1.0,
+            if (user1.location != 0 && user1.location == user2.loginRegion ||
+                user2.location != 0 && user2.location == user1.loginRegion) 1.0 else 0.0
+          )
         }
         )
         .leftOuterJoin(positives)

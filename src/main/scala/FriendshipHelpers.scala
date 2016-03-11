@@ -100,7 +100,6 @@ object FriendshipHelpers {
 
     if ((fType & M_PARENT) > 0) {
       result |= FAMILY
-      result |= SCHOOL
     }
 
     if ((fType & M_CHILD) > 0) {
