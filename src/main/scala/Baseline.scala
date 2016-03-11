@@ -77,7 +77,7 @@ object Baseline {
     // split data into training (90%) and validation (10%)
     // step 6
     val splits = trainData.randomSplit(Array(0.9, 0.1), seed = 11L)
-    val training = splits(0).cache()
+    val training = splits(0)
     val validation = splits(1)
 
     // run training algorithm to build the model
