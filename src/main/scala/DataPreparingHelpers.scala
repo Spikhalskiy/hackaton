@@ -36,7 +36,17 @@ object DataPreparingHelpers {
     pairs
   }
 
-  def prepareData(
+  def prepareAdamicAdarData(
+      commonFriendsCounts: RDD[PairWithCommonFriends],
+      positives: RDD[((Int, Int), Double)],
+      ageSexBC: Broadcast[scala.collection.Map[Int, Profile]]): RDD[((Int, Int), (Vector, Option[Double]))] = {
+
+    commonFriendsCounts
+        .map(pair => (pair.person1, pair.person2) -> Vectors.dense(pair.commonFriendsCount))
+        .leftOuterJoin(positives)
+  }
+
+  def prepareUserData(
       commonFriendsCounts: RDD[PairWithCommonFriends],
       positives: RDD[((Int, Int), Double)],
       ageSexBC: Broadcast[scala.collection.Map[Int, Profile]]): RDD[((Int, Int), (Vector, Option[Double]))] = {
@@ -47,7 +57,6 @@ object DataPreparingHelpers {
           val user2 = ageSexBC.value.getOrElse(pair.person2, Profile(0, 0, 0, 0 ,0 , 0))
           val fType = pair.fAccumulator
           Vectors.dense(
-            pair.commonFriendsCount,
             (ageToYears(user1.age) - ageToYears(user2.age)).toDouble,
             combineSex(user1.sex, user2.sex),
             abs(user1.create_date - user2.create_date).toDouble,
@@ -56,16 +65,30 @@ object DataPreparingHelpers {
             if (user1.location != 0 && user2.location != 0) if (user1.location == user2.location) 1.0 else 0.0 else -1.0,
             if (user1.loginRegion != 0 && user2.loginRegion != 0) if (user1.loginRegion == user2.loginRegion) 1.0 else 0.0 else -1.0,
             if (user1.location != 0 && user1.location == user2.loginRegion ||
-                user2.location != 0 && user2.location == user1.loginRegion) 1.0 else 0.0,
+                user2.location != 0 && user2.location == user1.loginRegion) 1.0 else 0.0
+          )
+        }
+        )
+        .leftOuterJoin(positives)
+  }
 
-            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fType, FriendshipHelpers.CLOSE_FRIENDS_COUNT_MASK, FriendshipHelpers.CLOSE_FRIENDS_COUNT_OFFSET).toDouble,
-            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fType, FriendshipHelpers.FAMILY_COUNT_MASK, FriendshipHelpers.FAMILY_COUNT_OFFSET).toDouble,
-            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fType, FriendshipHelpers.CLOSE_FAMILY_COUNT_MASK, FriendshipHelpers.CLOSE_FAMILY_COUNT_OFFSET).toDouble,
-            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fType, FriendshipHelpers.SCHOOL_COUNT_MASK, FriendshipHelpers.SCHOOL_COUNT_OFFSET).toDouble,
-            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fType, FriendshipHelpers.WORK_COUNT_MASK, FriendshipHelpers.WORK_COUNT_OFFSET).toDouble,
-            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fType, FriendshipHelpers.UNIVERSITY_COUNT_MASK, FriendshipHelpers.UNIVERSITY_COUNT_OFFSET).toDouble,
-            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fType, FriendshipHelpers.ARMY_COUNT_MASK, FriendshipHelpers.ARMY_COUNT_OFFSET).toDouble,
-            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fType, FriendshipHelpers.PLAY_COUNT_MASK, FriendshipHelpers.PLAY_COUNT_OFFSET).toDouble
+  def prepareFriendsTypeData(
+      commonFriendsCounts: RDD[PairWithCommonFriends],
+      positives: RDD[((Int, Int), Double)],
+      ageSexBC: Broadcast[scala.collection.Map[Int, Profile]]): RDD[((Int, Int), (Vector, Option[Double]))] = {
+
+    commonFriendsCounts
+        .map(pair => (pair.person1, pair.person2) -> {
+          val fAcc = pair.fAccumulator
+          Vectors.dense(
+            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fAcc, FriendshipHelpers.CLOSE_FRIENDS_COUNT_MASK, FriendshipHelpers.CLOSE_FRIENDS_COUNT_OFFSET).toDouble,
+            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fAcc, FriendshipHelpers.FAMILY_COUNT_MASK, FriendshipHelpers.FAMILY_COUNT_OFFSET).toDouble,
+            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fAcc, FriendshipHelpers.CLOSE_FAMILY_COUNT_MASK, FriendshipHelpers.CLOSE_FAMILY_COUNT_OFFSET).toDouble,
+            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fAcc, FriendshipHelpers.SCHOOL_COUNT_MASK, FriendshipHelpers.SCHOOL_COUNT_OFFSET).toDouble,
+            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fAcc, FriendshipHelpers.WORK_COUNT_MASK, FriendshipHelpers.WORK_COUNT_OFFSET).toDouble,
+            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fAcc, FriendshipHelpers.UNIVERSITY_COUNT_MASK, FriendshipHelpers.UNIVERSITY_COUNT_OFFSET).toDouble,
+            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fAcc, FriendshipHelpers.ARMY_COUNT_MASK, FriendshipHelpers.ARMY_COUNT_OFFSET).toDouble,
+            FriendshipHelpers.getGranulatedFTypeCountFromAccumulator(fAcc, FriendshipHelpers.PLAY_COUNT_MASK, FriendshipHelpers.PLAY_COUNT_OFFSET).toDouble
           )
         }
         )

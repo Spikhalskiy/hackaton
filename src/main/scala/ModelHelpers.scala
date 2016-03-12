@@ -55,39 +55,6 @@ object ModelHelpers {
     new PipelineClassifier(model)
   }
 
-  // step 8
-  def buildPrediction(
-      testData: RDD[((Int, Int), LabeledPoint)],
-      model: UnifiedClassifier,
-      threshold: Double,
-      predictionPath: String,
-      sqlc: SQLContext) = {
-    import sqlc.implicits._
-
-    val labeledPoints = testData.map({case (userPair, LabeledPoint(label, features)) => (serializeTuple(userPair), label, features)})
-    val predictedRDD = model.predict[String](labeledPoints.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES)).cache()
-
-    val testPrediction = {
-      predictedRDD
-          .flatMap { case (pairStr, predictedProbability) =>
-            val (user1, user2) = deserializeTuple(pairStr)
-            Seq(user1 -> (user2, predictedProbability), user2 -> (user1, predictedProbability))
-          }
-          .filter(t => t._1 % 11 == 7 && t._2._2 >= threshold)
-          .groupByKey(NumPartitions)
-          .map(t => {
-            val user = t._1
-            val friendsWithRatings = t._2
-            val topBestFriends = friendsWithRatings.toList.sortBy(-_._2).take(100).map(x => x._1)
-            (user, topBestFriends)
-          })
-          .sortByKey(true, 1)
-          .map(t => t._1 + "\t" + t._2.mkString("\t"))
-    }
-
-    testPrediction.saveAsTextFile(predictionPath,  classOf[GzipCodec])
-  }
-
   def addMetadata(df: DataFrame) = {
     val meta = NominalAttribute
         .defaultAttr
@@ -96,14 +63,5 @@ object ModelHelpers {
         .toMetadata
 
     df.withColumn(DataFrameColumns.LABEL, df.col(DataFrameColumns.LABEL).as(DataFrameColumns.LABEL, meta))
-  }
-
-  def serializeTuple(tuple: (Int, Int)): String = {
-    tuple._1.toString + "," + tuple._2.toString
-  }
-
-  def deserializeTuple(str: String): (Int, Int) = {
-    val splits = str.split(',')
-    (splits(0).toInt, splits(1).toInt)
   }
 }

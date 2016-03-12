@@ -8,7 +8,19 @@ object Strategies {
     1.0
   }
 
-  def classificationModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = {
+  def aaClassificationModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = {
+    ModelHelpers.logisticRegressionModel(training)
+  }
+
+  def fTypeClassificationModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = {
     ModelHelpers.decisionTreeModel(training, sqlc)
+  }
+
+  def userClassificationModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = {
+    ModelHelpers.decisionTreeModel(training, sqlc)
+  }
+
+  def ensembleClassificationModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = {
+    ModelHelpers.logisticRegressionModel(training)
   }
 }

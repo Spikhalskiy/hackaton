@@ -1,14 +1,16 @@
 import java.io.File
 
+import org.apache.hadoop.io.compress.GzipCodec
 import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.SQLContext
+import org.apache.spark.sql.{DataFrame, SQLContext}
 import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema
 import org.apache.spark.{SparkContext, SparkConf}
 import org.slf4j.LoggerFactory
 
 import scala.math.log
+import org.apache.spark.mllib.linalg.{Vector, Vectors}
 
 case class OneWayFriendship(anotherUser: Int, fType: Int)
 //describe pair of user with common friend between them
@@ -31,7 +33,6 @@ object Baseline {
       .setAppName("Baseline")
     val sc = new SparkContext(sparkConf)
     val sqlc = new SQLContext(sc)
-    import sqlc.implicits._
 
     val dataDir = if (args.length == 1) args(0) else "./"
 
@@ -50,9 +51,7 @@ object Baseline {
     // step 2
     val commonFriends = sqlc
         .read.parquet(commonFriendsPath + "/part_*/")
-        .map(t => PairWithCommonFriends(t.getAs[Int](0), t.getAs[Int](1), t.getAs[Double](2), t.getAs[Int](3))).cache()
-
-    val trainCommonFriendsCounts = commonFriends.filter(pair => pair.person1 % 11 != 7 && pair.person2 % 11 != 7)
+        .map(t => PairWithCommonFriends(t.getAs[Int](0), t.getAs[Int](1), t.getAs[Double](2), t.getAs[Int](3)))
 
     // step 3
     val usersBC = sc.broadcast(graph.map(userFriends => userFriends.user).collect().toSet)
@@ -68,48 +67,98 @@ object Baseline {
 
     val ageSexBC = DataPreparingHelpers.prepareAgeSexBroadcast(sc, demographyPath)
 
-    // step 5
-    val trainData = {
-      DataPreparingHelpers.prepareData(trainCommonFriendsCounts, positives, ageSexBC)
-        .map(t => LabeledPoint(t._2._2.getOrElse(0.0), t._2._1))
-    }
-
-
     // split data into training (90%) and validation (10%)
     // step 6
-    val splits = trainData.randomSplit(Array(0.9, 0.1), seed = 11L)
-    val training = splits(0)
-    val validation = splits(1)
+    val trainCommonFriendsCounts = commonFriends.filter(pair => pair.person1 % 11 != 7 && pair.person2 % 11 != 7)
+    val splits = trainCommonFriendsCounts.randomSplit(Array(0.7, 0.2, 0.1), seed = 11L)
+    val training = splits(0).cache()
+    val ensembleTraining = splits(1).cache()
+    val validation = splits(2).cache()
 
-    // run training algorithm to build the model
-    val model = Strategies.classificationModel(training, sqlc)
+    //prepare low-level models
+    val aaTrainingData = DataPreparingHelpers.prepareAdamicAdarData(training, positives, ageSexBC)
+        .map(t => LabeledPoint(t._2._2.getOrElse(0.0), t._2._1))
+    val aaModel = Strategies.aaClassificationModel(aaTrainingData, sqlc)
 
-    val validationWithKey = validation
-        .map({case LabeledPoint(label, features) => (Helpers.randomLong(), label, features)}).cache() //cache needed because we generate random ids here
-    val predictedRDD = model.predict[Long](
-        validationWithKey.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES))
-    val predictionAndLabels = validationWithKey.map({case (key, label, features) => (key, label)})
-        .join(predictedRDD).map({case (key, (label, predictedProbability)) => (predictedProbability, label)})
+    val ftTrainingData = DataPreparingHelpers.prepareFriendsTypeData(training, positives, ageSexBC)
+        .map(t => LabeledPoint(t._2._2.getOrElse(0.0), t._2._1))
+    val ftModel = Strategies.fTypeClassificationModel(ftTrainingData, sqlc)
 
-    // estimate model quality
-    @transient val metricsLogReg = new BinaryClassificationMetrics(predictionAndLabels, 100)
-    val threshold = metricsLogReg.fMeasureByThreshold(2.0).sortBy(-_._2).take(1)(0)._1
-    println("Use threshold = " + threshold)
+    val userTrainingData = DataPreparingHelpers.prepareUserData(training, positives, ageSexBC)
+        .map(t => LabeledPoint(t._2._2.getOrElse(0.0), t._2._1))
+    val userModel = Strategies.userClassificationModel(userTrainingData, sqlc)
 
-    val rocLogReg = metricsLogReg.areaUnderROC()
-    println("model ROC = " + rocLogReg.toString)
+    //prepare data for ensemble model
+    val aaETrainingData = toPreDF(DataPreparingHelpers.prepareAdamicAdarData(ensembleTraining, positives, ageSexBC))
+    val aaETrainPredicted = aaModel.predict[String](toDF[String](aaETrainingData, sqlc))
+
+    val ftETrainingData = toPreDF(DataPreparingHelpers.prepareFriendsTypeData(ensembleTraining, positives, ageSexBC))
+    val ftETrainPredicted = ftModel.predict[String](toDF[String](ftETrainingData, sqlc))
+
+    val userETrainingData = toPreDF(DataPreparingHelpers.prepareUserData(ensembleTraining, positives, ageSexBC))
+    val userETrainPredicted = userModel.predict[String](toDF[String](userETrainingData, sqlc))
+
+    val trainForEnsemble = joinLabelsAndPredictionsToLabeledPoints(aaETrainingData.map({case (key, label, features) => (key, label)}),
+        aaETrainPredicted, ftETrainPredicted, userETrainPredicted)
+
+    //train ensemble
+    val ensembleModel = Strategies.ensembleClassificationModel(trainForEnsemble, sqlc)
+
+    //prepare data for ensemble validation
+    val aaEValidationData = toPreDF(DataPreparingHelpers.prepareAdamicAdarData(validation, positives, ageSexBC))
+    val aaEValidationPredicted = aaModel.predict[String](toDF[String](aaEValidationData, sqlc))
+
+    val ftEValidationData = toPreDF(DataPreparingHelpers.prepareFriendsTypeData(validation, positives, ageSexBC))
+    val ftEValidationPredicted = ftModel.predict[String](toDF[String](ftEValidationData, sqlc))
+
+    val userEValidationData = toPreDF(DataPreparingHelpers.prepareUserData(validation, positives, ageSexBC))
+    val userEValidationPredicted = userModel.predict[String](toDF[String](userEValidationData, sqlc))
+
+    val validationForEnsemble = joinLabelsAndPredictionsToLabeledPoints(
+      aaEValidationData.map({case (key, label, features) => (key, label)}),
+      aaEValidationPredicted, ftEValidationPredicted, userEValidationPredicted)
+    val threshold = validateAndGetThreshold(validationForEnsemble, ensembleModel, sqlc)
+
+
 
     // compute scores on the test set
     // step 7
-    val testCommonFriendsCounts = commonFriends.filter(pair => pair.person1 % 11 == 7 || pair.person2 % 11 == 7)
+    val testCommonFriendsCounts = commonFriends.filter(pair => pair.person1 % 11 == 7 || pair.person2 % 11 == 7).cache()
 
-    val testData = {
-      DataPreparingHelpers.prepareData(testCommonFriendsCounts, positives, ageSexBC)
-        .map(t => t._1 -> LabeledPoint(t._2._2.getOrElse(0.0), t._2._1))
-        .filter(t => t._2.label == 0.0)
+    //prepare data for ensemble validation
+    val aaETestData = onlyWithoutFriendship(toPreDF(DataPreparingHelpers.prepareAdamicAdarData(testCommonFriendsCounts, positives, ageSexBC)))
+    val ftETestData = onlyWithoutFriendship(toPreDF(DataPreparingHelpers.prepareFriendsTypeData(testCommonFriendsCounts, positives, ageSexBC)))
+    val userETestData = onlyWithoutFriendship(toPreDF(DataPreparingHelpers.prepareUserData(testCommonFriendsCounts, positives, ageSexBC)))
+
+    val aaETestPredicted = aaModel.predict[String](toDF[String](aaETestData, sqlc))
+    val ftETestPredicted = ftModel.predict[String](toDF[String](ftETestData, sqlc))
+    val userETestPredicted = ftModel.predict[String](toDF[String](userETestData, sqlc))
+
+    val testForEnsemble = aaETestData.map({case (key, label, features) => (key, label)})
+        .join(aaETestPredicted).join(ftETestPredicted).join(userETestPredicted)
+        .map({case (key, (((label, aaPred), ftPred), userPred)) => (key, label, Vectors.dense(aaPred, ftPred, userPred))})
+
+    val predictedRDD = ensembleModel.predict[String](toDF[String](testForEnsemble, sqlc)).cache()
+
+    val testPrediction = {
+      predictedRDD
+          .flatMap { case (pairStr, predictedProbability) =>
+            val (user1, user2) = Helpers.deserializeTuple(pairStr)
+            Seq(user1 -> (user2, predictedProbability), user2 -> (user1, predictedProbability))
+          }
+          .filter(t => t._1 % 11 == 7 && t._2._2 >= threshold)
+          .groupByKey(NumPartitions)
+          .map(t => {
+            val user = t._1
+            val friendsWithRatings = t._2
+            val topBestFriends = friendsWithRatings.toList.sortBy(-_._2).take(100).map(x => x._1)
+            (user, topBestFriends)
+          })
+          .sortByKey(true, 1)
+          .map(t => t._1 + "\t" + t._2.mkString("\t"))
     }
 
-    ModelHelpers.buildPrediction(testData, model, threshold, predictionPath, sqlc)
+    testPrediction.saveAsTextFile(predictionPath, classOf[GzipCodec])
   }
 
   def graphPrepare(sc: SparkContext, graphPath: String) = {
@@ -181,5 +230,41 @@ object Baseline {
         commonFriendsCounts.toDF.repartition(4).write.parquet(commonFriendsPath + "/part_" + partition)
       }
     }
+  }
+
+  def validateAndGetThreshold(validationData: RDD[LabeledPoint], model: UnifiedClassifier, sqlc: SQLContext): Double = {
+    val validationWithKey = validationData
+        .map({case LabeledPoint(label, features) => (Helpers.randomLong(), label, features)}).cache() //cache needed because we generate random ids here
+    val predictedRDD = model.predict[Long](toDF(validationWithKey, sqlc))
+    val predictionAndLabels = validationWithKey.map({case (key, label, features) => (key, label)})
+        .join(predictedRDD).map({case (key, (label, predictedProbability)) => (predictedProbability, label)})
+
+    // estimate model quality
+    @transient val metricsLogReg = new BinaryClassificationMetrics(predictionAndLabels, 100)
+    val threshold = metricsLogReg.fMeasureByThreshold(2.0).sortBy(-_._2).take(1)(0)._1
+    println("Use threshold = " + threshold)
+
+    val rocLogReg = metricsLogReg.areaUnderROC()
+    println("model ROC = " + rocLogReg.toString)
+
+    threshold
+  }
+
+  def toDF[KEY](rdd: RDD[(KEY, Double, Vector)], sqlc: SQLContext): DataFrame = {
+    import sqlc.implicits._
+    rdd.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES)
+  }
+
+  def toPreDF(preparedData: RDD[((Int, Int), (Vector, Option[Double]))]): RDD[(String, Double, Vector)] = {
+    preparedData.map({case (userPair, (features, positiveOption)) => (Helpers.serializeTuple(userPair), positiveOption.getOrElse(0.0), features)})
+  }
+
+  def onlyWithoutFriendship(preDF: RDD[(String, Double, Vector)]): RDD[(String, Double, Vector)] = {
+    preDF.filter({case (key, label, features) => label == 0.0})
+  }
+
+  def joinLabelsAndPredictionsToLabeledPoints(labeled: RDD[(String, Double)], aaPrediction: RDD[(String, Double)], ftPrediction: RDD[(String, Double)], userPrediction: RDD[(String, Double)]) = {
+    labeled.join(aaPrediction).join(ftPrediction).join(userPrediction)
+        .map({case (key, (((label, aaPred), ftPred), userPred)) => LabeledPoint(label, Vectors.dense(aaPred, ftPred, userPred))})
   }
 }
