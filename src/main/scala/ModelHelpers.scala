@@ -12,7 +12,7 @@ import org.slf4j.LoggerFactory
 object ModelHelpers {
   val Log = LoggerFactory.getLogger(Baseline.getClass)
 
-  val NumPartitions = 120
+  val NumPartitions = 50
 
   def logisticRegressionModel(training: RDD[LabeledPoint]): UnifiedClassifier = {
     val model = new LogisticRegressionWithLBFGS()

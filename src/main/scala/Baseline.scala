@@ -11,11 +11,12 @@ import org.slf4j.LoggerFactory
 import scala.math.log
 
 case class OneWayFriendship(anotherUser: Int, fType: Int)
-case class Friendship(user1: Int, user2: Int, commonFriendSize: Int, combinedFType: Int)
-case class SquashedFriendship(weighedFLink: Double, combinedFType: Int)
-case class PairWithCommonFriends(person1: Int, person2: Int, commonFriendsCount: Double, combinedFType: Int)
+//describe pair of user with common friend between them
+case class MiddleFriendship(user1: Int, user2: Int, middleUserCommonFriendSize: Int, granulatedMergedFType: Int)
+case class SquashedFriendship(weighedFLink: Double, fAccumulator: Int)
+case class PairWithCommonFriends(person1: Int, person2: Int, commonFriendsCount: Double, fAccumulator: Int)
 case class UserFriends(user: Int, friends: Array[OneWayFriendship])
-case class Profile(age: Int, sex: Int, country: Long, location: Long, loginRegion: Long)
+case class Profile(create_date: Int, age: Int, sex: Int, country: Long, location: Long, loginRegion: Long)
 
 object Baseline {
   val Log = LoggerFactory.getLogger(Baseline.getClass)
@@ -169,11 +170,11 @@ object Baseline {
                   new OneWayFriendship(t.getAs[Int](0), t.getAs[Int](1))), NumPartitionsGraph, partition))
               .flatMap(pairs => pairs.map(
                 friendship => (friendship.user1, friendship.user2) ->
-                    SquashedFriendship(Strategies.getCombinedFriendshipCoef(friendship.combinedFType) / log(friendship.commonFriendSize), friendship.combinedFType))
+                    SquashedFriendship(Strategies.getCombinedFriendshipCoef(friendship.granulatedMergedFType) / log(friendship.middleUserCommonFriendSize), FriendshipHelpers.granulatedFTypeToFAccumulator(friendship.granulatedMergedFType)))
               )
-              .reduceByKey({case (SquashedFriendship(weight1, combinedFType1), SquashedFriendship(weight2, combinedFType2)) =>
-                SquashedFriendship(weight1 + weight2, FriendshipHelpers.mergeCombinedFriendshipTypes(combinedFType1, combinedFType2))})
-              .map({case ((user1, user2), SquashedFriendship(fScore, combinedFType)) => PairWithCommonFriends(user1, user2, fScore, combinedFType)})
+              .reduceByKey({case (SquashedFriendship(weight1, fAccumulator1), SquashedFriendship(weight2, fAccumulator2)) =>
+                SquashedFriendship(weight1 + weight2, FriendshipHelpers.mergeAccumulators(fAccumulator1, fAccumulator2))})
+              .map({case ((user1, user2), SquashedFriendship(fScore, fAccumulator)) => PairWithCommonFriends(user1, user2, fScore, fAccumulator)})
               .filter(pair => pair.commonFriendsCount >= 2) //was 8 before
         }
 
