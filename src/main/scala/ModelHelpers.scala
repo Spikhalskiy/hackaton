@@ -55,7 +55,7 @@ object ModelHelpers {
     new DTClassifier(model)
   }
 
-  def randomForestModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = { 
+  def randomForestModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = {
     import sqlc.implicits._
     val trainingDF = addMetadata(training.toDF())
 
