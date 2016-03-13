@@ -4,7 +4,7 @@ import org.apache.hadoop.io.compress.GzipCodec
 import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{DataFrame, SQLContext}
+import org.apache.spark.sql.SQLContext
 import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema
 import org.apache.spark.{SparkContext, SparkConf}
 import org.slf4j.LoggerFactory
@@ -18,7 +18,7 @@ case class MiddleFriendship(user1: Int, user2: Int, middleUserCommonFriendSize: 
 case class SquashedFriendship(weighedFLink: Double, fAccumulator: Int)
 case class PairWithCommonFriends(person1: Int, person2: Int, commonFriendsCount: Double, fAccumulator: Int)
 case class UserFriends(user: Int, friends: Array[OneWayFriendship])
-case class Profile(create_date: Int, age: Int, sex: Int, country: Long, location: Long, loginRegion: Long)
+case class Profile(create_date: Long, age: Int, sex: Int, country: Long, location: Long, loginRegion: Long)
 
 object Baseline {
   val Log = LoggerFactory.getLogger(Baseline.getClass)
@@ -28,11 +28,11 @@ object Baseline {
   val MeaningfulMaxFriendsCount = 1200
 
   def main(args: Array[String]) {
-
     val sparkConf = new SparkConf()
       .setAppName("Baseline")
     val sc = new SparkContext(sparkConf)
     val sqlc = new SQLContext(sc)
+    import sqlc.implicits._
 
     val dataDir = if (args.length == 1) args(0) else "./"
 
@@ -90,13 +90,13 @@ object Baseline {
 
     //prepare data for ensemble model
     val aaETrainingData = toPreDF(DataPreparingHelpers.prepareAdamicAdarData(ensembleTraining, positives, ageSexBC))
-    val aaETrainPredicted = aaModel.predict[String](toDF[String](aaETrainingData, sqlc))
+    val aaETrainPredicted = aaModel.predict[String](aaETrainingData.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES))
 
     val ftETrainingData = toPreDF(DataPreparingHelpers.prepareFriendsTypeData(ensembleTraining, positives, ageSexBC))
-    val ftETrainPredicted = ftModel.predict[String](toDF[String](ftETrainingData, sqlc))
+    val ftETrainPredicted = ftModel.predict[String](ftETrainingData.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES))
 
     val userETrainingData = toPreDF(DataPreparingHelpers.prepareUserData(ensembleTraining, positives, ageSexBC))
-    val userETrainPredicted = userModel.predict[String](toDF[String](userETrainingData, sqlc))
+    val userETrainPredicted = userModel.predict[String](userETrainingData.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES))
 
     val trainForEnsemble = joinLabelsAndPredictionsToLabeledPoints(aaETrainingData.map({case (key, label, features) => (key, label)}),
         aaETrainPredicted, ftETrainPredicted, userETrainPredicted)
@@ -106,13 +106,13 @@ object Baseline {
 
     //prepare data for ensemble validation
     val aaEValidationData = toPreDF(DataPreparingHelpers.prepareAdamicAdarData(validation, positives, ageSexBC))
-    val aaEValidationPredicted = aaModel.predict[String](toDF[String](aaEValidationData, sqlc))
+    val aaEValidationPredicted = aaModel.predict[String](aaEValidationData.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES))
 
     val ftEValidationData = toPreDF(DataPreparingHelpers.prepareFriendsTypeData(validation, positives, ageSexBC))
-    val ftEValidationPredicted = ftModel.predict[String](toDF[String](ftEValidationData, sqlc))
+    val ftEValidationPredicted = ftModel.predict[String](ftEValidationData.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES))
 
     val userEValidationData = toPreDF(DataPreparingHelpers.prepareUserData(validation, positives, ageSexBC))
-    val userEValidationPredicted = userModel.predict[String](toDF[String](userEValidationData, sqlc))
+    val userEValidationPredicted = userModel.predict[String](userEValidationData.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES))
 
     val validationForEnsemble = joinLabelsAndPredictionsToLabeledPoints(
       aaEValidationData.map({case (key, label, features) => (key, label)}),
@@ -130,15 +130,15 @@ object Baseline {
     val ftETestData = onlyWithoutFriendship(toPreDF(DataPreparingHelpers.prepareFriendsTypeData(testCommonFriendsCounts, positives, ageSexBC)))
     val userETestData = onlyWithoutFriendship(toPreDF(DataPreparingHelpers.prepareUserData(testCommonFriendsCounts, positives, ageSexBC)))
 
-    val aaETestPredicted = aaModel.predict[String](toDF[String](aaETestData, sqlc))
-    val ftETestPredicted = ftModel.predict[String](toDF[String](ftETestData, sqlc))
-    val userETestPredicted = ftModel.predict[String](toDF[String](userETestData, sqlc))
+    val aaETestPredicted = aaModel.predict[String](aaETestData.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES))
+    val ftETestPredicted = ftModel.predict[String](ftETestData.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES))
+    val userETestPredicted = ftModel.predict[String](userETestData.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES))
 
     val testForEnsemble = aaETestData.map({case (key, label, features) => (key, label)})
         .join(aaETestPredicted).join(ftETestPredicted).join(userETestPredicted)
         .map({case (key, (((label, aaPred), ftPred), userPred)) => (key, label, Vectors.dense(aaPred, ftPred, userPred))})
 
-    val predictedRDD = ensembleModel.predict[String](toDF[String](testForEnsemble, sqlc)).cache()
+    val predictedRDD = ensembleModel.predict[String](testForEnsemble.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES))
 
     val testPrediction = {
       predictedRDD
@@ -233,9 +233,11 @@ object Baseline {
   }
 
   def validateAndGetThreshold(validationData: RDD[LabeledPoint], model: UnifiedClassifier, sqlc: SQLContext): Double = {
+    import sqlc.implicits._
+
     val validationWithKey = validationData
         .map({case LabeledPoint(label, features) => (Helpers.randomLong(), label, features)}).cache() //cache needed because we generate random ids here
-    val predictedRDD = model.predict[Long](toDF(validationWithKey, sqlc))
+    val predictedRDD = model.predict[Long](validationWithKey.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES))
     val predictionAndLabels = validationWithKey.map({case (key, label, features) => (key, label)})
         .join(predictedRDD).map({case (key, (label, predictedProbability)) => (predictedProbability, label)})
 
@@ -248,11 +250,6 @@ object Baseline {
     println("model ROC = " + rocLogReg.toString)
 
     threshold
-  }
-
-  def toDF[KEY](rdd: RDD[(KEY, Double, Vector)], sqlc: SQLContext): DataFrame = {
-    import sqlc.implicits._
-    rdd.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES)
   }
 
   def toPreDF(preparedData: RDD[((Int, Int), (Vector, Option[Double]))]): RDD[(String, Double, Vector)] = {
