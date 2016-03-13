@@ -52,7 +52,7 @@ object ModelHelpers {
     // Train model.  This also runs the indexers.
     val model = pipeline.fit(trainingDF)
 
-    new PipelineClassifier(model)
+    new DTClassifier(model)
   }
 
   def gbtModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = {
@@ -84,7 +84,7 @@ object ModelHelpers {
     // Train model.  This also runs the indexers.
     val model = pipeline.fit(trainingDF)
 
-    new PipelineClassifier(model)
+    new DTClassifier(model)
   }
 
   // step 8

@@ -23,7 +23,6 @@ object Baseline {
 
   val NumPartitions = 50
   val NumPartitionsGraph = 40
-  val MeaningfulMaxFriendsCount = 1200
 
   def main(args: Array[String]) {
 
@@ -139,12 +138,12 @@ object Baseline {
       // step 1.a from description
 
       graph
-          .filter(userFriends => userFriends.friends.length >= 2 && userFriends.friends.length <= MeaningfulMaxFriendsCount) //was 8 before
+          .filter(userFriends => userFriends.friends.length >= 2) //was 8 before
           .flatMap(userFriends => userFriends.friends.map(
             x => (x.anotherUser, OneWayFriendship(userFriends.user, FriendshipHelpers.invertFriendshipType(x.fType)))))
           .groupByKey(NumPartitions)
           .map({case (userFromList, oneWayFriendshipSeq) => oneWayFriendshipSeq.toArray})
-          .filter(userFriends => userFriends.length >= 2 && userFriends.length <= MeaningfulMaxFriendsCount)
+          .filter(userFriends => userFriends.length >= 2)
           .map(userFriends => userFriends.sortBy({case oneWayFriendship => oneWayFriendship.anotherUser}))
           .map(friends => new Tuple1(friends))
           .toDF
@@ -175,7 +174,7 @@ object Baseline {
               .reduceByKey({case (SquashedFriendship(weight1, fAccumulator1), SquashedFriendship(weight2, fAccumulator2)) =>
                 SquashedFriendship(weight1 + weight2, FriendshipHelpers.mergeAccumulators(fAccumulator1, fAccumulator2))})
               .map({case ((user1, user2), SquashedFriendship(fScore, fAccumulator)) => PairWithCommonFriends(user1, user2, fScore, fAccumulator)})
-              .filter(pair => pair.commonFriendsCount >= 2) //was 8 before
+              .filter(pair => pair.commonFriendsCount >= 1.5) //was 8 before
         }
 
         commonFriendsCounts.toDF.repartition(4).write.parquet(commonFriendsPath + "/part_" + partition)
