@@ -1,3 +1,6 @@
+import java.util.Date
+import java.util.concurrent.TimeUnit
+
 import org.apache.spark.SparkContext
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.mllib.linalg.Vectors
@@ -5,9 +8,10 @@ import org.apache.spark.mllib.linalg.Vector
 import org.apache.spark.rdd.RDD
 
 import scala.collection.mutable.ArrayBuffer
-import scala.math.abs
+import scala.math._
 
 object DataPreparingHelpers {
+  val FEB_1_2016 = new Date(2016, 2, 1).getTime
 
   // step 4
   def prepareAgeSexBroadcast(sc: SparkContext, demographyPath: String) = {
@@ -57,15 +61,15 @@ object DataPreparingHelpers {
           val user2 = ageSexBC.value.getOrElse(pair.person2, Profile(0, 0, 0, 0 ,0 , 0))
           val fType = pair.fAccumulator
           Vectors.dense(
+            ageToYears(user1.age),
             (ageToYears(user1.age) - ageToYears(user2.age)).toDouble,
             combineSex(user1.sex, user2.sex),
-            abs(user1.create_date - user2.create_date).toDouble,
+            profileCreationDatesAreVeryClose(user1.create_date, user2.create_date),
+            min(logProfileAge(user1.create_date), logProfileAge(user2.create_date)),
 
             if (user1.country != 0 && user2.country != 0) if (user1.country == user2.country) 1.0 else 0.0 else -1.0,
             if (user1.location != 0 && user2.location != 0) if (user1.location == user2.location) 1.0 else 0.0 else -1.0,
-            if (user1.loginRegion != 0 && user2.loginRegion != 0) if (user1.loginRegion == user2.loginRegion) 1.0 else 0.0 else -1.0,
-            if (user1.location != 0 && user1.location == user2.loginRegion ||
-                user2.location != 0 && user2.location == user1.loginRegion) 1.0 else 0.0
+            if (user1.loginRegion != 0 && user2.loginRegion != 0) if (user1.loginRegion == user2.loginRegion) 1.0 else 0.0 else -1.0
           )
         }
         )
@@ -125,5 +129,13 @@ object DataPreparingHelpers {
       val str = strArray(index)
       if (str == null || str.isEmpty) 0L else str.toLong
     }
+  }
+
+  def profileCreationDatesAreVeryClose(creationDate1: Int, creationDate2: Int): Double = {
+    if (abs(creationDate1 - creationDate2) <= TimeUnit.DAYS.toMillis(7)) 1.0 else 0.0
+  }
+
+  def logProfileAge(creationDate: Int): Double = {
+    log(FEB_1_2016 - creationDate)
   }
 }

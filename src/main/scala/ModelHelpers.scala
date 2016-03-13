@@ -2,7 +2,6 @@ import org.apache.spark.ml.Pipeline
 import org.apache.spark.ml.classification.DecisionTreeClassifier
 import org.apache.spark.ml.feature.VectorIndexer
 import org.apache.spark.mllib.classification.LogisticRegressionWithLBFGS
-import org.apache.hadoop.io.compress.GzipCodec
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SQLContext}
@@ -31,7 +30,7 @@ object ModelHelpers {
     val featureIndexer = new VectorIndexer()
         .setInputCol(DataFrameColumns.FEATURES)
         .setOutputCol("indexedFeatures")
-        .setMaxCategories(5) // features with > 4 distinct values are treated as continuous
+        .setMaxCategories(8)
         .fit(trainingDF)
 
     val dt = new DecisionTreeClassifier()
