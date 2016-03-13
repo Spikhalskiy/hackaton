@@ -16,7 +16,7 @@ case class MiddleFriendship(user1: Int, user2: Int, middleUserCommonFriendSize: 
 case class SquashedFriendship(weighedFLink: Double, fAccumulator: Int)
 case class PairWithCommonFriends(person1: Int, person2: Int, commonFriendsCount: Double, fAccumulator: Int)
 case class UserFriends(user: Int, friends: Array[OneWayFriendship])
-case class Profile(create_date: Int, age: Int, sex: Int, country: Long, location: Long, loginRegion: Long)
+case class Profile(create_date: Long, age: Int, sex: Int, country: Long, location: Long, loginRegion: Long)
 
 object Baseline {
   val Log = LoggerFactory.getLogger(Baseline.getClass)

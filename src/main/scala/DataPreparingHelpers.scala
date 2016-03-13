@@ -19,7 +19,7 @@ object DataPreparingHelpers {
       sc.textFile(demographyPath)
           .map(line => {
             val lineSplit = line.trim().split("\t")
-            defaultInt(lineSplit, 0) -> Profile(defaultInt(lineSplit, 1), defaultInt(lineSplit, 2), defaultInt(lineSplit, 3),
+            defaultInt(lineSplit, 0) -> Profile(defaultLong(lineSplit, 1), defaultInt(lineSplit, 2), defaultInt(lineSplit, 3),
               defaultLong(lineSplit, 4), defaultLong(lineSplit, 5), defaultLong(lineSplit, 6))
           })
     sc.broadcast(ageSex.collectAsMap())
@@ -108,11 +108,11 @@ object DataPreparingHelpers {
     }
   }
 
-  def profileCreationDatesAreVeryClose(creationDate1: Int, creationDate2: Int): Double = {
+  def profileCreationDatesAreVeryClose(creationDate1: Long, creationDate2: Long): Double = {
     if (abs(creationDate1 - creationDate2) <= TimeUnit.DAYS.toMillis(7)) 1.0 else 0.0
   }
 
-  def logProfileAge(creationDate: Int): Double = {
+  def logProfileAge(creationDate: Long): Double = {
     log(FEB_1_2016 - creationDate)
   }
 }
