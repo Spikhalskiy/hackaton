@@ -70,7 +70,6 @@ object ModelHelpers {
         .setLabelCol(DataFrameColumns.LABEL)
         .setFeaturesCol("indexedFeatures")
 
-        .setImpurity("gini")
         .setMaxBins(64)
 
         .setMaxDepth(5)
