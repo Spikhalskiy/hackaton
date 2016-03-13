@@ -138,7 +138,7 @@ object Baseline {
         .join(aaETestPredicted).join(ftETestPredicted).join(userETestPredicted)
         .map({case (key, (((label, aaPred), ftPred), userPred)) => (key, label, Vectors.dense(aaPred, ftPred, userPred))})
 
-    val predictedRDD = ensembleModel.predict[String](testForEnsemble.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES))
+    val predictedRDD = ensembleModel.predict[String](testForEnsemble.toDF(DataFrameColumns.KEY, DataFrameColumns.LABEL, DataFrameColumns.FEATURES)).cache()
 
     val testPrediction = {
       predictedRDD

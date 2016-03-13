@@ -21,6 +21,6 @@ object Strategies {
   }
 
   def ensembleClassificationModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = {
-    ModelHelpers.logisticRegressionModel(training)
+    ModelHelpers.decisionTreeModel(training, sqlc)
   }
 }

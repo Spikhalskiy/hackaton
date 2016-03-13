@@ -1,11 +1,11 @@
 import org.apache.spark.ml.Pipeline
+import org.apache.spark.ml.attribute.NominalAttribute
 import org.apache.spark.ml.classification.DecisionTreeClassifier
 import org.apache.spark.ml.feature.VectorIndexer
 import org.apache.spark.mllib.classification.LogisticRegressionWithLBFGS
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SQLContext}
-import org.apache.spark.ml.attribute.NominalAttribute
 import org.slf4j.LoggerFactory
 
 object ModelHelpers {
@@ -30,7 +30,7 @@ object ModelHelpers {
     val featureIndexer = new VectorIndexer()
         .setInputCol(DataFrameColumns.FEATURES)
         .setOutputCol("indexedFeatures")
-        .setMaxCategories(8)
+        .setMaxCategories(5)
         .fit(trainingDF)
 
     val dt = new DecisionTreeClassifier()
