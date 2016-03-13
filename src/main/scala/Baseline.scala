@@ -25,7 +25,6 @@ object Baseline {
 
   val NumPartitions = 50
   val NumPartitionsGraph = 40
-  val MeaningfulMaxFriendsCount = 1200
 
   def main(args: Array[String]) {
     val sparkConf = new SparkConf()
@@ -188,12 +187,12 @@ object Baseline {
       // step 1.a from description
 
       graph
-          .filter(userFriends => userFriends.friends.length >= 2 && userFriends.friends.length <= MeaningfulMaxFriendsCount) //was 8 before
+          .filter(userFriends => userFriends.friends.length >= 2) //was 8 before
           .flatMap(userFriends => userFriends.friends.map(
             x => (x.anotherUser, OneWayFriendship(userFriends.user, FriendshipHelpers.invertFriendshipType(x.fType)))))
           .groupByKey(NumPartitions)
           .map({case (userFromList, oneWayFriendshipSeq) => oneWayFriendshipSeq.toArray})
-          .filter(userFriends => userFriends.length >= 2 && userFriends.length <= MeaningfulMaxFriendsCount)
+          .filter(userFriends => userFriends.length >= 2)
           .map(userFriends => userFriends.sortBy({case oneWayFriendship => oneWayFriendship.anotherUser}))
           .map(friends => new Tuple1(friends))
           .toDF
