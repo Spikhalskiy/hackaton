@@ -1,5 +1,5 @@
 import org.apache.spark.ml.Pipeline
-import org.apache.spark.ml.classification.{GBTClassifier, DecisionTreeClassifier}
+import org.apache.spark.ml.classification.{RandomForestClassifier, GBTClassifier, DecisionTreeClassifier}
 import org.apache.spark.ml.feature.VectorIndexer
 import org.apache.spark.mllib.classification.LogisticRegressionWithLBFGS
 import org.apache.spark.mllib.regression.LabeledPoint
@@ -44,6 +44,37 @@ object ModelHelpers {
         .setMaxDepth(30)
         .setMinInstancesPerNode(50)
 
+
+    // Chain indexers and tree in a Pipeline
+    val pipeline = new Pipeline()
+        .setStages(Array(featureIndexer, dt))
+
+    // Train model.  This also runs the indexers.
+    val model = pipeline.fit(trainingDF)
+
+    new DTClassifier(model)
+  }
+
+  def randomForestModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = { 
+    import sqlc.implicits._
+    val trainingDF = addMetadata(training.toDF())
+
+    // Automatically identify categorical features, and index them.
+    val featureIndexer = new VectorIndexer()
+        .setInputCol(DataFrameColumns.FEATURES)
+        .setOutputCol("indexedFeatures")
+        .setMaxCategories(8)
+        .fit(trainingDF)
+
+    val dt = new RandomForestClassifier()
+        .setLabelCol(DataFrameColumns.LABEL)
+        .setFeaturesCol("indexedFeatures")
+
+        .setImpurity("gini")
+        .setMaxBins(64)
+
+        .setMaxDepth(30)
+        .setMinInstancesPerNode(50)
 
     // Chain indexers and tree in a Pipeline
     val pipeline = new Pipeline()
