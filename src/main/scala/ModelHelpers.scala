@@ -1,5 +1,5 @@
 import org.apache.spark.ml.Pipeline
-import org.apache.spark.ml.classification.DecisionTreeClassifier
+import org.apache.spark.ml.classification.{GBTClassifier, DecisionTreeClassifier}
 import org.apache.spark.ml.feature.VectorIndexer
 import org.apache.spark.mllib.classification.LogisticRegressionWithLBFGS
 import org.apache.spark.mllib.regression.LabeledPoint
@@ -48,6 +48,39 @@ object ModelHelpers {
     // Chain indexers and tree in a Pipeline
     val pipeline = new Pipeline()
         .setStages(Array(featureIndexer, dt))
+
+    // Train model.  This also runs the indexers.
+    val model = pipeline.fit(trainingDF)
+
+    new PipelineClassifier(model)
+  }
+
+  def gbtModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = {
+    import sqlc.implicits._
+    val trainingDF = addMetadata(training.toDF())
+
+    // Automatically identify categorical features, and index them.
+    val featureIndexer = new VectorIndexer()
+        .setInputCol(DataFrameColumns.FEATURES)
+        .setOutputCol("indexedFeatures")
+        .setMaxCategories(8)
+        .fit(trainingDF)
+
+    val gbt = new GBTClassifier()
+        .setLabelCol(DataFrameColumns.LABEL)
+        .setFeaturesCol("indexedFeatures")
+
+        .setImpurity("gini")
+        .setMaxBins(64)
+
+        .setMaxDepth(5)
+        .setMinInstancesPerNode(50)
+
+        .setMaxIter(15)
+
+    // Chain indexers and tree in a Pipeline
+    val pipeline = new Pipeline()
+        .setStages(Array(featureIndexer, gbt))
 
     // Train model.  This also runs the indexers.
     val model = pipeline.fit(trainingDF)

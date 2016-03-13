@@ -9,6 +9,6 @@ object Strategies {
   }
 
   def classificationModel(training: RDD[LabeledPoint], sqlc: SQLContext): UnifiedClassifier = {
-    ModelHelpers.decisionTreeModel(training, sqlc)
+    ModelHelpers.gbtModel(training, sqlc)
   }
 }
