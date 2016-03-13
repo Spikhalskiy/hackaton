@@ -6,6 +6,7 @@ import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{DataFrame, SQLContext}
 import org.apache.spark.ml.attribute.NominalAttribute
+import org.apache.hadoop.io.compress.GzipCodec
 import org.slf4j.LoggerFactory
 
 object ModelHelpers {
