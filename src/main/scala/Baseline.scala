@@ -223,7 +223,7 @@ object Baseline {
               .reduceByKey({case (SquashedFriendship(weight1, fAccumulator1), SquashedFriendship(weight2, fAccumulator2)) =>
                 SquashedFriendship(weight1 + weight2, FriendshipHelpers.mergeAccumulators(fAccumulator1, fAccumulator2))})
               .map({case ((user1, user2), SquashedFriendship(fScore, fAccumulator)) => PairWithCommonFriends(user1, user2, fScore, fAccumulator)})
-              .filter(pair => pair.commonFriendsCount >= 2) //was 8 before
+              .filter(pair => pair.commonFriendsCount >= 1.5) //was 8 before
         }
 
         commonFriendsCounts.toDF.repartition(4).write.parquet(commonFriendsPath + "/part_" + partition)
