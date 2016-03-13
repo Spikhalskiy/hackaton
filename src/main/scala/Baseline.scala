@@ -23,8 +23,8 @@ case class Profile(create_date: Long, age: Int, sex: Int, country: Long, locatio
 object Baseline {
   val Log = LoggerFactory.getLogger(Baseline.getClass)
 
-  val NumPartitions = 50
-  val NumPartitionsGraph = 40
+  val NumPartitions = 70
+  val NumPartitionsGraph = 70
 
   def main(args: Array[String]) {
     val sparkConf = new SparkConf()
